@@ -100,11 +100,6 @@ export default function DashboardPage() {
               <path d={toPath(resolvedPoints)} fill="none" stroke="#22C55E" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
               {threatPoints.map((p, i) => <circle key={`t${i}`} cx={p[0]} cy={p[1]} r={4} fill="white" stroke="#EF4444" strokeWidth={2} />)}
               {resolvedPoints.map((p, i) => <circle key={`r${i}`} cx={p[0]} cy={p[1]} r={4} fill="white" stroke="#22C55E" strokeWidth={2} />)}
-              <g>
-                <rect x={threatPoints[5][0] - 56} y={threatPoints[5][1] - 50} width={112} height={38} rx={8} fill="#0F172A" />
-                <text x={threatPoints[5][0]} y={threatPoints[5][1] - 34} textAnchor="middle" fill="white" fontSize={11} fontWeight={600} fontFamily="JetBrains Mono">14 threats</text>
-                <text x={threatPoints[5][0]} y={threatPoints[5][1] - 20} textAnchor="middle" fill="#94A3B8" fontSize={10} fontFamily="DM Sans">$28,750/mo</text>
-              </g>
               <defs>
                 <linearGradient id="threatGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#EF4444" /><stop offset="100%" stopColor="#EF4444" stopOpacity={0} /></linearGradient>
                 <linearGradient id="resolvedGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#22C55E" /><stop offset="100%" stopColor="#22C55E" stopOpacity={0} /></linearGradient>

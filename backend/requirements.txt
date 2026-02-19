@@ -1,0 +1,47 @@
+# Core
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-dotenv==1.0.1
+
+# Database
+sqlalchemy==2.0.36
+asyncpg==0.30.0
+alembic==1.14.1
+
+# Redis
+redis==5.2.1
+
+# Auth
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+pydantic[email-validator]==2.10.4
+
+# HTTP / Scraping
+httpx==0.28.1
+playwright==1.49.1
+
+# NLP / Similarity
+scikit-learn==1.6.1
+spacy==3.8.3
+
+# Image comparison
+scikit-image==0.25.0
+imagehash==4.3.2
+Pillow==11.1.0
+
+# WHOIS
+python-whois==0.9.4
+
+# PDF generation
+weasyprint==63.1
+
+# Task queue
+celery[redis]==5.4.0
+
+# Stripe
+stripe==11.4.1
+
+# Utilities
+pydantic-settings==2.7.1
+python-multipart==0.0.18
+boto3==1.36.7

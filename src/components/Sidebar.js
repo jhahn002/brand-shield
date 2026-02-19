@@ -11,7 +11,7 @@ const NAV = [
     { icon: "🔍", label: "SERP Viewer", href: "/serp" },
   ]},
   { section: "Actions", items: [
-    { icon: "📤", label: "Takedowns", href: "/threats?status=takedown_pending", badge: () => DASHBOARD.pendingTakedowns },
+    { icon: "📤", label: "Takedowns", href: "/takedowns", badge: () => DASHBOARD.pendingTakedowns },
     { icon: "📄", label: "Reports", href: "/audits" },
     { icon: "🎯", label: "Prospecting", href: "/audits" },
   ]},

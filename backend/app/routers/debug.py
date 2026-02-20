@@ -18,7 +18,7 @@ class SerpDebugRequest(BaseModel):
 
 @router.post("/raw-serp")
 async def raw_serp(body: SerpDebugRequest):
-    """Get raw SERP data from DataForSEO — shows the FULL unprocessed API response."""
+    """Get raw SERP data — shows the FULL unprocessed API response from organic endpoint."""
     settings = get_settings()
     creds = f"{settings.dataforseo_login}:{settings.dataforseo_password}"
     encoded = base64.b64encode(creds.encode()).decode()
@@ -42,20 +42,79 @@ async def raw_serp(body: SerpDebugRequest):
         )
         raw = resp.json()
 
-    # Extract key info for debugging
     task = raw.get("tasks", [{}])[0] if raw.get("tasks") else {}
-    
+
     return {
         "keyword": body.keyword,
         "http_status": resp.status_code,
-        "api_version": raw.get("version"),
         "status_code": raw.get("status_code"),
         "status_message": raw.get("status_message"),
         "task_status_code": task.get("status_code"),
-        "task_status_message": task.get("status_message"),
         "task_cost": task.get("cost"),
         "result_count": task.get("result_count"),
         "results": task.get("result"),
+    }
+
+
+@router.post("/raw-paid")
+async def raw_paid(body: SerpDebugRequest):
+    """Test the paid ads endpoint directly — try multiple endpoint paths."""
+    settings = get_settings()
+    creds = f"{settings.dataforseo_login}:{settings.dataforseo_password}"
+    encoded = base64.b64encode(creds.encode()).decode()
+    headers = {
+        "Authorization": f"Basic {encoded}",
+        "Content-Type": "application/json",
+    }
+
+    payload = [{
+        "keyword": body.keyword,
+        "location_code": 2840,
+        "language_code": "en",
+    }]
+
+    # Try the paid endpoint
+    results = {}
+    endpoints = [
+        "/serp/google/paid/live/regular",
+        "/serp/google/paid/live/advanced",
+    ]
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        for endpoint in endpoints:
+            try:
+                resp = await client.post(
+                    f"https://api.dataforseo.com/v3{endpoint}",
+                    json=payload,
+                    headers=headers,
+                )
+                raw = resp.json()
+                task = (raw.get("tasks") or [{}])[0] if raw.get("tasks") else {}
+                
+                # Count paid items
+                paid_items = []
+                for result_set in task.get("result") or []:
+                    for item in (result_set.get("items") or []):
+                        paid_items.append({
+                            "type": item.get("type"),
+                            "title": item.get("title", "")[:60],
+                            "domain": item.get("domain", ""),
+                        })
+                
+                results[endpoint] = {
+                    "status_code": raw.get("status_code"),
+                    "task_status": task.get("status_code"),
+                    "task_message": task.get("status_message"),
+                    "cost": task.get("cost"),
+                    "items_count": len(paid_items),
+                    "items": paid_items[:10],
+                }
+            except Exception as e:
+                results[endpoint] = {"error": str(e)}
+
+    return {
+        "keyword": body.keyword,
+        "endpoints_tested": results,
     }
 
 
@@ -64,7 +123,7 @@ async def analyze_serp(body: SerpDebugRequest):
     """Get SERP data AND run threat analysis."""
     client = get_dataforseo_client()
     serp_data = await client.get_serp(body.keyword)
-    
+
     threats = []
     if body.brand_name and body.brand_domain:
         signals = analyze_serp_data(serp_data, body.brand_name, body.brand_domain)
@@ -79,7 +138,7 @@ async def analyze_serp(body: SerpDebugRequest):
             }
             for s in signals
         ]
-    
+
     return {
         "keyword": body.keyword,
         "paid_count": len(serp_data["paid"]),

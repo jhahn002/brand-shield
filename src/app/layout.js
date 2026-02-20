@@ -1,4 +1,5 @@
 import "./globals.css";
+import { BrandProvider } from "@/lib/BrandContext";
 
 export const metadata = {
   title: "Brand Shield — Protect Your Brand",
@@ -8,7 +9,11 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <BrandProvider>
+          {children}
+        </BrandProvider>
+      </body>
     </html>
   );
 }

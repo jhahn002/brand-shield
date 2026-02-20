@@ -1,155 +1,225 @@
-"use client";
-import { useState, useMemo } from "react";
-import DashboardShell from "@/components/DashboardShell";
-import { THREATS, STATUS_MAP, TYPE_LABEL, severityColor } from "@/lib/mock-data";
-import { useMounted } from "@/hooks/useApi";
-import Link from "next/link";
+'use client';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useThreats } from '@/hooks/useApi';
+import { useBrandContext } from '@/lib/BrandContext';
 
-const Chk = ({ checked, onChange }) => (
-  <div onClick={e => { e.stopPropagation(); onChange(); }} style={{
-    width: 18, height: 18, borderRadius: 5, cursor: "pointer", flexShrink: 0,
-    border: checked ? "none" : "1.5px solid #CBD5E1",
-    background: checked ? "#2563EB" : "white",
-    display: "flex", alignItems: "center", justifyContent: "center",
-  }}>{checked && <span style={{ color: "white", fontSize: 11, fontWeight: 700 }}>✓</span>}</div>
-);
+const statusMap = {
+  detected: { label: 'Detected', bg: '#FEF2F2', color: '#DC2626' },
+  confirmed: { label: 'Confirmed', bg: '#FEF2F2', color: '#DC2626' },
+  investigating: { label: 'Investigating', bg: '#FFFBEB', color: '#D97706' },
+  takedown_pending: { label: 'Pending', bg: '#EFF6FF', color: '#2563EB' },
+  takedown_submitted: { label: 'Submitted', bg: '#EFF6FF', color: '#2563EB' },
+  resolved: { label: 'Resolved', bg: '#F0FDF4', color: '#16A34A' },
+  dismissed: { label: 'Dismissed', bg: '#F1F5F9', color: '#64748B' },
+};
 
-const Pill = ({ label, active, onClick }) => (
-  <button onClick={onClick} style={{
-    padding: "5px 14px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid", cursor: "pointer",
-    background: active ? "#EFF6FF" : "white", borderColor: active ? "#BFDBFE" : "#E2E8F0", color: active ? "#2563EB" : "#94A3B8",
-  }}>{label}</button>
-);
+const typeLabels = {
+  paid_ad: 'Paid Ad',
+  organic_clone: 'Clone',
+  organic_misleading: 'Misleading',
+  shopping_listing: 'Shopping',
+  other: 'Other',
+};
 
-export default function ThreatQueuePage() {
-  const mounted = useMounted();
-  const [selected, setSelected] = useState(new Set());
-  const [sortKey, setSortKey] = useState("severity");
-  const [sortDir, setSortDir] = useState("desc");
-  const [filterStatus, setFilterStatus] = useState("all");
-  const [filterSeverity, setFilterSeverity] = useState("all");
-  const [search, setSearch] = useState("");
+function severityColor(s) {
+  if (s >= 80) return '#DC2626';
+  if (s >= 60) return '#D97706';
+  if (s >= 40) return '#2563EB';
+  return '#64748B';
+}
 
-  const filtered = useMemo(() => {
-    let r = [...THREATS];
-    if (filterStatus !== "all") r = r.filter(t => t.status === filterStatus);
-    if (filterSeverity === "critical") r = r.filter(t => t.severity >= 70);
-    else if (filterSeverity === "moderate") r = r.filter(t => t.severity >= 40 && t.severity < 70);
-    else if (filterSeverity === "low") r = r.filter(t => t.severity < 40);
-    if (search) r = r.filter(t => t.domain.includes(search.toLowerCase()));
-    r.sort((a, b) => {
-      const v = sortDir === "desc" ? -1 : 1;
-      if (sortKey === "severity") return (a.severity - b.severity) * v;
-      if (sortKey === "revenue") return (a.revenue - b.revenue) * v;
-      return a.domain.localeCompare(b.domain) * v;
-    });
-    return r;
-  }, [filterStatus, filterSeverity, search, sortKey, sortDir]);
+function severityBg(s) {
+  if (s >= 80) return '#FEF2F2';
+  if (s >= 60) return '#FFFBEB';
+  if (s >= 40) return '#EFF6FF';
+  return '#F1F5F9';
+}
 
-  const allSel = filtered.length > 0 && filtered.every(t => selected.has(t.id));
-  const handleSort = (k) => { if (sortKey === k) setSortDir(d => d === "desc" ? "asc" : "desc"); else { setSortKey(k); setSortDir("desc"); } };
+function formatDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+export default function ThreatsPage() {
+  const router = useRouter();
+  const { brandId, brandName } = useBrandContext();
+  const [statusFilter, setStatusFilter] = useState('');
+  const [sortBy, setSortBy] = useState('severity');
+
+  const { data: threats, loading, error, refetch } = useThreats(brandId, {
+    status: statusFilter || undefined,
+  });
+
+  const threatList = Array.isArray(threats) ? threats : [];
+
+  // Sort client-side
+  const sorted = [...threatList].sort((a, b) => {
+    if (sortBy === 'severity') return (b.severity_score || 0) - (a.severity_score || 0);
+    if (sortBy === 'revenue') return (b.revenue_at_risk_monthly || 0) - (a.revenue_at_risk_monthly || 0);
+    if (sortBy === 'recent') return new Date(b.last_seen_at || 0) - new Date(a.last_seen_at || 0);
+    return 0;
+  });
+
+  if (!brandId) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', color: '#64748B' }}>
+        No brand selected. Go to the dashboard to set up a brand.
+      </div>
+    );
+  }
 
   return (
-    <DashboardShell>
+    <>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: "#0F172A" }}>Threat Queue</h1>
-          <p style={{ fontSize: 13, color: "#94A3B8", margin: "4px 0 0" }}>{THREATS.length} threats detected · ${THREATS.reduce((s, t) => s + t.revenue, 0).toLocaleString()}/mo at risk</p>
+          <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: '#0F172A' }}>Threat Queue</h1>
+          <p style={{ fontSize: 13, color: '#94A3B8', margin: '4px 0 0' }}>
+            {threatList.length} threat{threatList.length !== 1 ? 's' : ''} detected for {brandName || 'your brand'}
+          </p>
         </div>
-        {selected.size > 0 && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <button style={{ padding: "8px 18px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer", background: "#DC2626", color: "white" }}>Initiate Takedown ({selected.size})</button>
-            <button style={{ padding: "8px 18px", borderRadius: 8, fontSize: 13, fontWeight: 500, border: "1px solid #E2E8F0", cursor: "pointer", background: "white", color: "#64748B" }}>Dismiss ({selected.size})</button>
-          </div>
-        )}
       </div>
 
       {/* Filters */}
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
-        <div style={{ position: "relative", flex: "0 0 260px" }}>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search domains..." style={{ width: "100%", padding: "8px 14px 8px 36px", borderRadius: 8, fontSize: 13, border: "1px solid #E2E8F0", background: "white", color: "#1E293B", outline: "none" }} />
-          <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, opacity: 0.4 }}>🔍</span>
-        </div>
-        <div style={{ height: 24, width: 1, background: "#E2E8F0" }} />
-        {[["all", "All"], ["detected", "Detected"], ["investigating", "Investigating"], ["takedown_pending", "Pending"], ["resolved", "Resolved"]].map(([v, l]) => (
-          <Pill key={v} label={l} active={filterStatus === v} onClick={() => setFilterStatus(v)} />
-        ))}
-        <div style={{ height: 24, width: 1, background: "#E2E8F0" }} />
-        {[["all", "All"], ["critical", "Critical"], ["moderate", "Moderate"], ["low", "Low"]].map(([v, l]) => (
-          <Pill key={v} label={l} active={filterSeverity === v} onClick={() => setFilterSeverity(v)} />
-        ))}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          style={{
+            padding: '8px 14px', borderRadius: 8, border: '1px solid #E2E8F0',
+            background: 'white', fontSize: 13, color: '#64748B', cursor: 'pointer',
+          }}
+        >
+          <option value="">All Statuses</option>
+          <option value="detected">Detected</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="investigating">Investigating</option>
+          <option value="takedown_pending">Takedown Pending</option>
+          <option value="takedown_submitted">Takedown Submitted</option>
+          <option value="resolved">Resolved</option>
+          <option value="dismissed">Dismissed</option>
+        </select>
+        <select
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value)}
+          style={{
+            padding: '8px 14px', borderRadius: 8, border: '1px solid #E2E8F0',
+            background: 'white', fontSize: 13, color: '#64748B', cursor: 'pointer',
+          }}
+        >
+          <option value="severity">Sort: Severity</option>
+          <option value="revenue">Sort: Revenue at Risk</option>
+          <option value="recent">Sort: Most Recent</option>
+        </select>
       </div>
 
       {/* Table */}
-      <div style={{ background: "white", borderRadius: 16, border: "1px solid #F1F5F9", overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.02)" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid #F1F5F9" }}>
-              <th style={{ padding: "12px 16px", width: 40 }}><Chk checked={allSel} onChange={() => { if (allSel) setSelected(new Set()); else setSelected(new Set(filtered.map(t => t.id))); }} /></th>
-              {[
-                { k: "domain", l: "Domain" }, { k: "type", l: "Type" }, { k: "severity", l: "Severity" },
-                { k: "revenue", l: "Revenue at Risk" }, { k: "status", l: "Status" }, { k: "firstSeen", l: "Detected" }, { k: "keywords", l: "Keywords" },
-              ].map(c => (
-                <th key={c.k} onClick={() => ["severity", "revenue", "domain"].includes(c.k) && handleSort(c.k)} style={{
-                  textAlign: "left", padding: "12px 12px", fontSize: 12, fontWeight: 600, color: "#94A3B8",
-                  cursor: ["severity", "revenue", "domain"].includes(c.k) ? "pointer" : "default", userSelect: "none",
-                }}>
-                  {c.l} {sortKey === c.k && <span style={{ color: "#2563EB", fontSize: 10 }}>{sortDir === "desc" ? "↓" : "↑"}</span>}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((t, i) => {
-              const sel = selected.has(t.id);
-              const sc = severityColor(t.severity);
-              const s = STATUS_MAP[t.status] || STATUS_MAP.detected;
-              return (
-                <tr key={t.id} style={{
-                  borderBottom: "1px solid #FAFBFC", cursor: "pointer",
-                  background: sel ? "#F8FBFF" : "transparent",
-                  opacity: mounted ? 1 : 0, animation: mounted ? `fadeIn 0.3s ease ${i * 0.02}s both` : "none",
-                }}
-                onMouseEnter={e => { if (!sel) e.currentTarget.style.background = "#FAFBFC"; }}
-                onMouseLeave={e => { if (!sel) e.currentTarget.style.background = sel ? "#F8FBFF" : "transparent"; }}>
-                  <td style={{ padding: "10px 16px" }}><Chk checked={sel} onChange={() => { const n = new Set(selected); n.has(t.id) ? n.delete(t.id) : n.add(t.id); setSelected(n); }} /></td>
-                  <td style={{ padding: "12px 12px" }}>
-                    <Link href={`/threats/${t.id}`} style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 500, color: "#1E293B", textDecoration: "none" }}>{t.domain}</Link>
-                  </td>
-                  <td style={{ padding: "12px 12px" }}><span style={{ fontSize: 12, fontWeight: 500, padding: "3px 10px", borderRadius: 6, background: "#F1F5F9", color: "#64748B" }}>{TYPE_LABEL[t.type] || t.type}</span></td>
-                  <td style={{ padding: "12px 12px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ width: 40, height: 5, borderRadius: 3, background: "#F1F5F9", overflow: "hidden" }}><div style={{ width: `${t.severity}%`, height: "100%", borderRadius: 3, background: sc }} /></div>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: sc, fontFamily: "var(--font-mono)" }}>{t.severity}</span>
-                    </div>
-                  </td>
-                  <td style={{ padding: "12px 12px" }}><span style={{ fontSize: 15, fontWeight: 700, color: "#EF4444", fontFamily: "var(--font-mono)" }}>${t.revenue.toLocaleString()}</span><span style={{ fontSize: 11, color: "#CBD5E1" }}>/mo</span></td>
-                  <td style={{ padding: "12px 12px" }}><span style={{ fontSize: 12, fontWeight: 500, padding: "4px 10px", borderRadius: 6, background: s.bg, color: s.color }}>{s.label}</span></td>
-                  <td style={{ padding: "12px 12px", fontSize: 13, color: "#94A3B8" }}>{t.firstSeen}</td>
-                  <td style={{ padding: "12px 12px" }}>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      {t.keywords.slice(0, 2).map(k => (
-                        <span key={k} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 5, background: "#F8FAFB", color: "#94A3B8", border: "1px solid #F1F5F9" }}>{k}</span>
-                      ))}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {filtered.length === 0 && <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: "#94A3B8" }}>No threats match your filters</td></tr>}
-          </tbody>
-        </table>
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 4px", fontSize: 13, color: "#94A3B8" }}>
-        <span>Showing {filtered.length} of {THREATS.length} threats</span>
-        <div style={{ display: "flex", gap: 16 }}>
-          <span>Critical: <strong style={{ color: "#EF4444" }}>{filtered.filter(t => t.severity >= 70).length}</strong></span>
-          <span>Moderate: <strong style={{ color: "#F59E0B" }}>{filtered.filter(t => t.severity >= 40 && t.severity < 70).length}</strong></span>
-          <span>Low: <strong style={{ color: "#22C55E" }}>{filtered.filter(t => t.severity < 40).length}</strong></span>
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center' }}>
+          <div style={{
+            width: 20, height: 20, borderRadius: '50%', margin: '0 auto 12px',
+            border: '2px solid #E2E8F0', borderTopColor: '#2563EB',
+            animation: 'spin 0.8s linear infinite',
+          }} />
+          <div style={{ color: '#64748B', fontSize: 13 }}>Loading threats...</div>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         </div>
-      </div>
-    </DashboardShell>
+      ) : error ? (
+        <div style={{
+          padding: 20, borderRadius: 12, background: '#FEF2F2',
+          border: '1px solid #FECACA', color: '#DC2626', fontSize: 14,
+        }}>
+          Failed to load threats: {error}
+        </div>
+      ) : (
+        <div style={{
+          background: 'white', borderRadius: 16, border: '1px solid #F1F5F9',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.02)', overflow: 'hidden',
+        }}>
+          {sorted.length > 0 ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid #F1F5F9' }}>
+                  {['Domain', 'Type', 'Severity', 'Revenue at Risk', 'Status', 'First Seen', 'Last Seen'].map(h => (
+                    <th key={h} style={{
+                      textAlign: 'left', padding: '12px 14px', fontSize: 11, fontWeight: 600,
+                      color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em',
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((t) => {
+                  const sev = Number(t.severity_score) || 0;
+                  const rev = Number(t.revenue_at_risk_monthly) || 0;
+                  const status = t.status || 'detected';
+                  const st = statusMap[status] || statusMap.detected;
+                  const type = t.threat_type || 'other';
+
+                  return (
+                    <tr
+                      key={t.id}
+                      onClick={() => router.push(`/threats/${t.id}`)}
+                      style={{ borderBottom: '1px solid #F8FAFC', cursor: 'pointer' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#FAFBFC'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <td style={{
+                        padding: '14px', fontWeight: 600, color: '#0F172A',
+                        fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
+                      }}>
+                        {t.domain}
+                      </td>
+                      <td style={{ padding: '14px', color: '#64748B' }}>
+                        {typeLabels[type] || type}
+                      </td>
+                      <td style={{ padding: '14px' }}>
+                        <span style={{
+                          display: 'inline-flex', padding: '3px 10px', borderRadius: 20,
+                          fontSize: 12, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace",
+                          background: severityBg(sev), color: severityColor(sev),
+                        }}>
+                          {sev}
+                        </span>
+                      </td>
+                      <td style={{
+                        padding: '14px', fontWeight: 600, color: '#D97706',
+                        fontFamily: "'JetBrains Mono', monospace", fontSize: 12,
+                      }}>
+                        ${rev.toLocaleString()}/mo
+                      </td>
+                      <td style={{ padding: '14px' }}>
+                        <span style={{
+                          padding: '4px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                          background: st.bg, color: st.color,
+                        }}>
+                          {st.label}
+                        </span>
+                      </td>
+                      <td style={{ padding: '14px', color: '#94A3B8', fontSize: 12 }}>
+                        {formatDate(t.first_seen_at)}
+                      </td>
+                      <td style={{ padding: '14px', color: '#94A3B8', fontSize: 12 }}>
+                        {formatDate(t.last_seen_at)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ padding: 60, textAlign: 'center' }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>🛡️</div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: '#0F172A', marginBottom: 4 }}>No threats found</div>
+              <div style={{ fontSize: 13, color: '#94A3B8' }}>
+                {statusFilter ? 'No threats match this filter. Try a different status.' : 'Your brand is looking clean!'}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 }

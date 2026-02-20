@@ -9,7 +9,6 @@ function useApiCall(fetchFn, deps = []) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-
   const refetch = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -23,12 +22,20 @@ function useApiCall(fetchFn, deps = []) {
       setLoading(false);
     }
   }, deps);
-
   useEffect(() => {
     refetch();
   }, [refetch]);
-
   return { data, loading, error, refetch };
+}
+
+/**
+ * Mounted animation hook — returns true after first render.
+ * Used by legacy pages for entrance animations.
+ */
+export function useMounted() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  return mounted;
 }
 
 /**

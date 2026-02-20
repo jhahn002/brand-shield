@@ -1,8 +1,11 @@
 """DataForSEO API client — keyword volume + SERP data."""
 import httpx
 import base64
+import logging
 from typing import List, Dict, Optional
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class DataForSEOClient:
@@ -19,6 +22,7 @@ class DataForSEOClient:
             "Authorization": f"Basic {credentials}",
             "Content-Type": "application/json",
         }
+        logger.info(f"DataForSEO client initialized for login: {self.login[:3]}***")
 
     async def _post(self, endpoint: str, payload: list) -> dict:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -30,19 +34,12 @@ class DataForSEOClient:
             response.raise_for_status()
             return response.json()
 
-    # ── Keyword Search Volume ─────────────────────────────
-
     async def get_search_volume(
         self,
         keywords: List[str],
-        location_code: int = 2840,  # US
+        location_code: int = 2840,
         language_code: str = "en",
     ) -> List[Dict]:
-        """
-        Get search volume + CPC for up to 1000 keywords.
-        Uses Google Ads search volume (live endpoint).
-        Returns list of {keyword, search_volume, cpc, competition}.
-        """
         payload = [{
             "keywords": keywords[:1000],
             "location_code": location_code,
@@ -58,8 +55,9 @@ class DataForSEOClient:
         tasks = data.get("tasks") or []
         for task in tasks:
             if task.get("status_code") != 20000:
+                logger.warning(f"Search volume task failed: {task.get('status_message')}")
                 continue
-            for item in task.get("result", []) or []:
+            for item in task.get("result") or []:
                 results.append({
                     "keyword": item.get("keyword", ""),
                     "search_volume": item.get("search_volume") or 0,
@@ -69,8 +67,6 @@ class DataForSEOClient:
 
         return results
 
-    # ── SERP Check ────────────────────────────────────────
-
     async def get_serp(
         self,
         keyword: str,
@@ -78,17 +74,11 @@ class DataForSEOClient:
         language_code: str = "en",
         depth: int = 30,
     ) -> Dict:
-        """
-        Get live SERP results for a single keyword.
-        Returns paid, organic, and shopping results.
-        Uses advanced endpoint for full SERP data.
-        """
         payload = [{
             "keyword": keyword,
             "location_code": location_code,
             "language_code": language_code,
             "depth": depth,
-            "se_results_count": depth,
         }]
 
         data = await self._post(
@@ -103,9 +93,10 @@ class DataForSEOClient:
         tasks = data.get("tasks") or []
         for task in tasks:
             if task.get("status_code") != 20000:
+                logger.warning(f"SERP task failed: {task.get('status_message')}")
                 continue
-            for result_set in task.get("result", []) or []:
-                for item in result_set.get("items", []) or []:
+            for result_set in task.get("result") or []:
+                for item in result_set.get("items") or []:
                     item_type = item.get("type", "")
 
                     if item_type == "paid":
@@ -125,14 +116,16 @@ class DataForSEOClient:
                             "url": item.get("url", ""),
                             "domain": item.get("domain", ""),
                         })
-                    elif item_type == "shopping":
+                    elif item_type in ("shopping", "commercial"):
                         shopping.append({
                             "title": item.get("title", ""),
                             "price": item.get("price", ""),
                             "merchant": item.get("seller", ""),
                             "url": item.get("url", ""),
+                            "domain": item.get("domain", ""),
                         })
 
+        logger.info(f"SERP for '{keyword}': {len(paid)} paid, {len(organic)} organic, {len(shopping)} shopping")
         return {
             "keyword": keyword,
             "paid": paid,
@@ -141,11 +134,6 @@ class DataForSEOClient:
         }
 
 
-# Singleton
-_client: Optional[DataForSEOClient] = None
-
 def get_dataforseo_client() -> DataForSEOClient:
-    global _client
-    if _client is None:
-        _client = DataForSEOClient()
-    return _client
+    """Create a fresh client each time (settings may change on restart)."""
+    return DataForSEOClient()

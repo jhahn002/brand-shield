@@ -4,8 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.database import get_db
 from app.config import get_settings
-from app.services.dataforseo import test_connection as test_dataforseo
 import redis.asyncio as aioredis
+import httpx
+import base64
 
 router = APIRouter(tags=["health"])
 
@@ -36,8 +37,15 @@ async def health_check(db: AsyncSession = Depends(get_db)):
     dataforseo_status = "not configured"
     if settings.dataforseo_login:
         try:
-            connected = await test_dataforseo()
-            dataforseo_status = "connected" if connected else "auth failed"
+            creds = f"{settings.dataforseo_login}:{settings.dataforseo_password}"
+            encoded = base64.b64encode(creds.encode()).decode()
+            headers = {"Authorization": f"Basic {encoded}"}
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    "https://api.dataforseo.com/v3/appendix/user_data",
+                    headers=headers,
+                )
+                dataforseo_status = "connected" if resp.status_code == 200 else "auth failed"
         except Exception as e:
             dataforseo_status = f"error: {str(e)[:100]}"
 

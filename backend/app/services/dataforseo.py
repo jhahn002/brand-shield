@@ -55,7 +55,7 @@ class DataForSEOClient:
         )
 
         results = []
-        tasks = data.get("tasks", [])
+        tasks = data.get("tasks") or []
         for task in tasks:
             if task.get("status_code") != 20000:
                 continue
@@ -100,7 +100,7 @@ class DataForSEOClient:
         organic = []
         shopping = []
 
-        tasks = data.get("tasks", [])
+        tasks = data.get("tasks") or []
         for task in tasks:
             if task.get("status_code") != 20000:
                 continue

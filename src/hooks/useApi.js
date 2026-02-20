@@ -1,35 +1,93 @@
-"use client";
-import { useState, useEffect } from "react";
+'use client';
+import { useState, useEffect, useCallback } from 'react';
+import * as api from '@/lib/api';
 
 /**
- * Simple data-fetching hook.
- * Currently returns mock data with a simulated delay.
- *
- * To connect to FastAPI backend, replace the setTimeout
- * with: const res = await fetch(`/api/v1/${endpoint}`);
+ * Generic fetch hook with loading/error states.
  */
-export function useApi(mockData, delay = 200) {
+function useApiCall(fetchFn, deps = []) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setData(mockData);
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchFn();
+      setData(result);
+    } catch (err) {
+      console.error('API error:', err);
+      setError(err.message || 'Failed to load data');
+    } finally {
       setLoading(false);
-    }, delay);
-    return () => clearTimeout(timer);
-  }, []);
+    }
+  }, deps);
 
-  return { data, loading, error };
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
+
+  return { data, loading, error, refetch };
 }
 
 /**
- * Mounted animation hook — returns true after first render.
- * Used for entrance animations across all pages.
+ * Dashboard data for a specific brand.
  */
-export function useMounted() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
-  return mounted;
+export function useDashboard(brandId) {
+  return useApiCall(
+    () => brandId ? api.getDashboard(brandId) : Promise.resolve(null),
+    [brandId]
+  );
+}
+
+/**
+ * List all brands for an org (for brand selector).
+ */
+export function useBrands(orgId) {
+  return useApiCall(
+    () => orgId ? api.listBrandsDashboard(orgId) : Promise.resolve(null),
+    [orgId]
+  );
+}
+
+/**
+ * Threats list for a brand.
+ */
+export function useThreats(brandId, filters = {}) {
+  return useApiCall(
+    () => brandId ? api.listThreats(brandId, filters) : Promise.resolve([]),
+    [brandId, JSON.stringify(filters)]
+  );
+}
+
+/**
+ * Single threat with evidence.
+ */
+export function useThreat(threatId) {
+  const threat = useApiCall(
+    () => threatId ? api.getThreat(threatId) : Promise.resolve(null),
+    [threatId]
+  );
+  const evidence = useApiCall(
+    () => threatId ? api.getThreatEvidence(threatId) : Promise.resolve([]),
+    [threatId]
+  );
+  return {
+    threat: threat.data,
+    evidence: evidence.data,
+    loading: threat.loading || evidence.loading,
+    error: threat.error || evidence.error,
+    refetch: () => { threat.refetch(); evidence.refetch(); },
+  };
+}
+
+/**
+ * Keywords for a brand.
+ */
+export function useKeywords(brandId) {
+  return useApiCall(
+    () => brandId ? api.listKeywords(brandId) : Promise.resolve([]),
+    [brandId]
+  );
 }

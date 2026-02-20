@@ -35,7 +35,7 @@ app.add_middleware(
         "https://*.up.railway.app",
         "*",  # TODO: tighten for production
     ],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

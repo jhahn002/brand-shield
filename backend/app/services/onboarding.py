@@ -1,278 +1,201 @@
-"""Brand onboarding pipeline — keyword generation + initial SERP sweep."""
-import re
-from typing import List, Tuple
+"""
+Brand onboarding pipeline.
+
+When a brand is created, this service:
+1. Generates keyword candidates from brand name + modifiers
+2. Fetches search volume/CPC from DataForSEO
+3. Filters out low-volume keywords
+4. Stores keywords in the database
+5. Runs the initial SERP sweep
+6. Stores SERP snapshots and flags potential threats
+"""
+import logging
+import math
 from datetime import datetime
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
 from app.models import (
     Brand, Keyword, KeywordType, SerpSnapshot,
-    FingerprintStatus,
+    Threat, ThreatType, ThreatStatus, FingerprintStatus
 )
+from app.services.keyword_generator import generate_keywords
 from app.services.dataforseo import get_dataforseo_client
 
+logger = logging.getLogger(__name__)
 
-# ── Keyword Generation ────────────────────────────────
-
-# Common modifiers to combine with brand name
-BRAND_MODIFIERS = [
-    "buy {brand}",
-    "{brand} official",
-    "{brand} official site",
-    "{brand} website",
-    "{brand} discount",
-    "{brand} discount code",
-    "{brand} coupon",
-    "{brand} coupon code",
-    "{brand} promo code",
-    "{brand} reviews",
-    "{brand} review",
-    "{brand} legit",
-    "{brand} scam",
-    "{brand} alternative",
-    "{brand} vs",
-    "is {brand} legit",
-    "{brand} sale",
-    "{brand} deals",
-    "{brand} free shipping",
-    "{brand} shop",
-    "{brand} store",
-    "{brand} online",
-]
-
-# Common misspellings generated via simple character swaps
-def generate_misspellings(brand: str) -> List[str]:
-    """Generate common misspellings using character substitutions."""
-    misspellings = set()
-    brand_lower = brand.lower()
-
-    # Adjacent key swaps
-    for i in range(len(brand_lower) - 1):
-        swapped = list(brand_lower)
-        swapped[i], swapped[i + 1] = swapped[i + 1], swapped[i]
-        result = "".join(swapped)
-        if result != brand_lower:
-            misspellings.add(result)
-
-    # Missing characters
-    for i in range(len(brand_lower)):
-        result = brand_lower[:i] + brand_lower[i + 1:]
-        if len(result) >= 3:
-            misspellings.add(result)
-
-    # Double characters
-    for i in range(len(brand_lower)):
-        result = brand_lower[:i] + brand_lower[i] + brand_lower[i:]
-        misspellings.add(result)
-
-    return list(misspellings)[:10]  # Cap at 10
+MIN_VOLUME_THRESHOLD = 10
 
 
-def classify_keyword(term: str, brand_name: str) -> KeywordType:
-    """Classify a keyword into its type."""
-    brand_lower = brand_name.lower()
-    term_lower = term.lower()
-
-    if term_lower == brand_lower:
-        return KeywordType.exact_brand
-    elif brand_lower in term_lower and len(term_lower) > len(brand_lower):
-        return KeywordType.brand_modifier
+def priority_to_interval(score: float) -> int:
+    if score >= 90:
+        return 12
+    elif score >= 70:
+        return 24
+    elif score >= 50:
+        return 48
+    elif score >= 30:
+        return 72
+    elif score >= 10:
+        return 168
     else:
-        return KeywordType.misspelling
+        return 720
 
 
-def generate_keyword_candidates(brand_name: str) -> List[Tuple[str, KeywordType]]:
-    """Generate keyword candidates from brand name + modifiers."""
-    candidates = []
+def calculate_initial_priority(volume: int, cpc: float) -> float:
+    volume_score = min(100, (math.log10(max(volume, 1)) / math.log10(100000)) * 100)
+    cpc_score = min(100, (cpc / 10.0) * 100)
+    initial_score = (volume_score * 0.60) + (cpc_score * 0.40)
+    return round(min(100, max(5, initial_score)), 2)
 
-    # Exact brand
-    candidates.append((brand_name.lower(), KeywordType.exact_brand))
-
-    # Brand modifiers
-    for template in BRAND_MODIFIERS:
-        term = template.format(brand=brand_name.lower())
-        candidates.append((term, KeywordType.brand_modifier))
-
-    # Misspellings
-    for misspelling in generate_misspellings(brand_name):
-        candidates.append((misspelling, KeywordType.misspelling))
-
-    # Deduplicate
-    seen = set()
-    unique = []
-    for term, ktype in candidates:
-        if term not in seen:
-            seen.add(term)
-            unique.append((term, ktype))
-
-    return unique
-
-
-# ── Full Onboarding Pipeline ──────────────────────────
 
 async def run_onboarding(brand_id: str, db: AsyncSession) -> dict:
-    """
-    Full onboarding pipeline for a new brand:
-    1. Generate keyword candidates
-    2. Query DataForSEO for search volume + CPC
-    3. Store keywords in database
-    4. Run initial SERP sweep for top keywords
-    5. Store SERP snapshots
-    """
-    from sqlalchemy import select
-
-    # Load brand
-    result = await db.execute(
-        select(Brand).where(Brand.id == brand_id)
-    )
+    result = await db.execute(select(Brand).where(Brand.id == brand_id))
     brand = result.scalar_one_or_none()
     if not brand:
-        return {"error": "Brand not found"}
+        raise ValueError(f"Brand {brand_id} not found")
+
+    logger.info(f"Starting onboarding for brand '{brand.name}' ({brand.domain})")
 
     brand.fingerprint_status = FingerprintStatus.processing
     await db.commit()
 
     client = get_dataforseo_client()
 
-    # Step 1: Generate keyword candidates
-    candidates = generate_keyword_candidates(brand.name)
-    all_terms = [term for term, _ in candidates]
-    type_map = {term: ktype for term, ktype in candidates}
-
-    # Step 2: Get search volume from DataForSEO
     try:
-        volume_data = await client.get_search_volume(all_terms)
-    except Exception as e:
-        brand.fingerprint_status = FingerprintStatus.failed
-        await db.commit()
-        return {"error": f"DataForSEO volume lookup failed: {str(e)}"}
+        # Step 1: Generate keyword candidates
+        candidates = generate_keywords(brand.name, brand.domain)
+        logger.info(f"Generated {len(candidates)} keyword candidates")
 
-    # Build lookup
-    volume_lookup = {v["keyword"]: v for v in volume_data}
+        # Step 2: Fetch search volume from DataForSEO
+        terms = [c["term"] for c in candidates]
+        volume_data = {}
+        batch_size = 700
+        for i in range(0, len(terms), batch_size):
+            batch = terms[i:i + batch_size]
+            volumes = await client.get_search_volume(batch)
+            for v in volumes:
+                volume_data[v["keyword"]] = v
 
-    # Step 3: Create keyword records
-    keywords_created = 0
-    keywords_with_volume = []
+        logger.info(f"Got volume data for {len(volume_data)} keywords")
 
-    for term, ktype in candidates:
-        vol_info = volume_lookup.get(term, {})
-        monthly_volume = vol_info.get("search_volume", 0)
-        cpc = vol_info.get("cpc", 0)
+        # Step 3: Filter and store keywords
+        keywords_created = 0
+        keyword_objects = []
 
-        # Skip keywords with zero volume (except exact brand)
-        if monthly_volume == 0 and ktype != KeywordType.exact_brand:
-            continue
+        for candidate in candidates:
+            term = candidate["term"]
+            vol_info = volume_data.get(term, {})
+            volume = vol_info.get("search_volume", 0)
+            cpc = float(vol_info.get("cpc", 0))
 
-        # Calculate initial priority score
-        priority = calculate_initial_priority(monthly_volume, ktype)
+            if candidate["keyword_type"] in ("long_tail", "misspelling") and volume < MIN_VOLUME_THRESHOLD:
+                continue
 
-        kw = Keyword(
-            brand_id=brand.id,
-            term=term,
-            keyword_type=ktype,
-            monthly_volume=monthly_volume,
-            avg_cpc=Decimal(str(round(cpc, 2))),
-            priority_score=Decimal(str(round(priority, 2))),
-            check_interval_hours=priority_to_interval(priority),
-            is_active=True,
-        )
-        db.add(kw)
-        keywords_created += 1
+            priority = calculate_initial_priority(volume, cpc)
+            interval = priority_to_interval(priority)
 
-        if monthly_volume > 0:
-            keywords_with_volume.append(term)
-
-    await db.commit()
-
-    # Step 4: Initial SERP sweep (top 5 keywords by volume)
-    serp_keywords = sorted(
-        [(t, volume_lookup.get(t, {}).get("search_volume", 0)) for t in keywords_with_volume],
-        key=lambda x: x[1],
-        reverse=True,
-    )[:5]
-
-    serp_results = []
-    for term, _ in serp_keywords:
-        try:
-            serp_data = await client.get_serp(term)
-            # Find the keyword record
-            kw_result = await db.execute(
-                select(Keyword).where(
-                    Keyword.brand_id == brand.id,
-                    Keyword.term == term,
-                )
+            kw = Keyword(
+                brand_id=brand.id,
+                term=term,
+                keyword_type=KeywordType(candidate["keyword_type"]),
+                monthly_volume=volume,
+                avg_cpc=Decimal(str(cpc)),
+                priority_score=Decimal(str(priority)),
+                check_interval_hours=interval,
+                is_active=True,
             )
-            kw = kw_result.scalar_one_or_none()
-            if kw:
+            db.add(kw)
+            keyword_objects.append(kw)
+            keywords_created += 1
+
+        await db.commit()
+        for kw in keyword_objects:
+            await db.refresh(kw)
+
+        logger.info(f"Stored {keywords_created} keywords (filtered from {len(candidates)})")
+
+        # Step 4: Initial SERP sweep (top 20 by priority)
+        sorted_keywords = sorted(keyword_objects, key=lambda k: float(k.priority_score), reverse=True)
+        keywords_to_check = sorted_keywords[:20]
+
+        serp_count = 0
+        threats_found = 0
+
+        for kw in keywords_to_check:
+            try:
+                serp_data = await client.get_serp(kw.term)
+
+                flagged = 0
+                all_results = serp_data["paid"] + serp_data["organic"] + serp_data["shopping"]
+                for r in all_results:
+                    result_domain = r.get("domain", "")
+                    if result_domain and brand.domain not in result_domain:
+                        flagged += 1
+
                 snapshot = SerpSnapshot(
                     keyword_id=kw.id,
-                    checked_at=datetime.utcnow(),
                     geo_target="US",
-                    paid_results=serp_data.get("paid", []),
-                    organic_results=serp_data.get("organic", []),
-                    shopping_results=serp_data.get("shopping", []),
-                    flagged_count=0,  # TODO: implement flagging logic
+                    paid_results=serp_data["paid"],
+                    organic_results=serp_data["organic"],
+                    shopping_results=serp_data["shopping"],
+                    flagged_count=flagged,
                 )
                 db.add(snapshot)
+
                 kw.last_checked_at = datetime.utcnow()
-                serp_results.append({
-                    "keyword": term,
-                    "paid_count": len(serp_data.get("paid", [])),
-                    "organic_count": len(serp_data.get("organic", [])),
-                    "shopping_count": len(serp_data.get("shopping", [])),
-                })
-        except Exception as e:
-            serp_results.append({"keyword": term, "error": str(e)})
+                serp_count += 1
 
-    await db.commit()
+                # Flag paid ads from non-brand domains as potential threats
+                for ad in serp_data["paid"]:
+                    ad_domain = ad.get("domain", "")
+                    if ad_domain and brand.domain not in ad_domain:
+                        existing = await db.execute(
+                            select(Threat).where(
+                                Threat.brand_id == brand.id,
+                                Threat.domain == ad_domain,
+                            )
+                        )
+                        if not existing.scalar_one_or_none():
+                            threat = Threat(
+                                brand_id=brand.id,
+                                domain=ad_domain,
+                                threat_type=ThreatType.paid_ad,
+                                severity_score=Decimal("50"),
+                                status=ThreatStatus.detected,
+                                revenue_at_risk_monthly=Decimal("0"),
+                                first_seen_at=datetime.utcnow(),
+                                last_seen_at=datetime.utcnow(),
+                            )
+                            db.add(threat)
+                            threats_found += 1
 
-    # Step 5: Update brand status
-    brand.fingerprint_status = FingerprintStatus.complete
-    brand.last_crawl_at = datetime.utcnow()
-    await db.commit()
+            except Exception as e:
+                logger.error(f"SERP check failed for '{kw.term}': {e}")
+                continue
 
-    return {
-        "brand_id": str(brand.id),
-        "brand_name": brand.name,
-        "keywords_generated": len(candidates),
-        "keywords_with_volume": len(keywords_with_volume),
-        "keywords_stored": keywords_created,
-        "serp_results": serp_results,
-    }
+        await db.commit()
 
+        # Step 5: Update brand status
+        brand.fingerprint_status = FingerprintStatus.complete
+        brand.last_crawl_at = datetime.utcnow()
+        await db.commit()
 
-def calculate_initial_priority(volume: int, ktype: KeywordType) -> float:
-    """Calculate initial priority score (0-100) based on volume and type."""
-    import math
+        summary = {
+            "brand_id": str(brand.id),
+            "brand_name": brand.name,
+            "keywords_generated": len(candidates),
+            "keywords_stored": keywords_created,
+            "serp_checks_completed": serp_count,
+            "threats_found": threats_found,
+            "status": "complete",
+        }
+        logger.info(f"Onboarding complete: {summary}")
+        return summary
 
-    # Base score from volume (log-scaled, 0-60)
-    if volume > 0:
-        volume_score = min(60, math.log10(volume + 1) * 15)
-    else:
-        volume_score = 5  # Small base for exact brand with no volume data
-
-    # Type bonus (0-40)
-    type_bonus = {
-        KeywordType.exact_brand: 40,
-        KeywordType.brand_modifier: 20,
-        KeywordType.product: 15,
-        KeywordType.misspelling: 10,
-        KeywordType.long_tail: 5,
-    }
-
-    return min(100, volume_score + type_bonus.get(ktype, 10))
-
-
-def priority_to_interval(priority: float) -> int:
-    """Map priority score to check interval in hours."""
-    if priority >= 90:
-        return 12
-    elif priority >= 70:
-        return 24
-    elif priority >= 50:
-        return 48
-    elif priority >= 30:
-        return 72
-    elif priority >= 10:
-        return 168  # weekly
-    else:
-        return 720  # monthly
+    except Exception as e:
+        logger.error(f"Onboarding failed for brand {brand_id}: {e}")
+        brand.fingerprint_status = FingerprintStatus.failed
+        await db.commit()
+        raise

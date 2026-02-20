@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.config import get_settings
 from app.database import init_db
-from app.routers import health, brands, threats, keywords
+from app.routers import health, brands, threats, keywords, setup
 
 settings = get_settings()
 
@@ -45,6 +45,7 @@ app.include_router(health.router, prefix="/api/v1")
 app.include_router(brands.router, prefix="/api/v1")
 app.include_router(threats.router, prefix="/api/v1")
 app.include_router(keywords.router, prefix="/api/v1")
+app.include_router(setup.router, prefix="/api/v1")
 
 
 @app.get("/")

@@ -1,8 +1,9 @@
-"""DataForSEO API client — keyword volume + SERP data."""
+"""DataForSEO API client — keyword volume + SERP data (paid, organic, shopping)."""
 import httpx
 import base64
 import logging
-from typing import List, Dict, Optional
+import asyncio
+from typing import List, Dict
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -67,40 +68,50 @@ class DataForSEOClient:
 
         return results
 
-    async def get_serp(
-        self,
-        keyword: str,
-        location_code: int = 2840,
-        language_code: str = "en",
-        depth: int = 30,
-    ) -> Dict:
+    async def _get_organic(self, keyword: str, location_code: int, language_code: str, depth: int) -> List[Dict]:
+        """Fetch organic SERP results."""
         payload = [{
             "keyword": keyword,
             "location_code": location_code,
             "language_code": language_code,
             "depth": depth,
         }]
-
-        data = await self._post(
-            "/serp/google/organic/live/advanced",
-            payload,
-        )
-
-        paid = []
-        organic = []
-        shopping = []
-
-        tasks = data.get("tasks") or []
-        for task in tasks:
+        data = await self._post("/serp/google/organic/live/advanced", payload)
+        
+        results = []
+        for task in data.get("tasks") or []:
             if task.get("status_code") != 20000:
-                logger.warning(f"SERP task failed: {task.get('status_message')}")
                 continue
             for result_set in task.get("result") or []:
                 for item in result_set.get("items") or []:
-                    item_type = item.get("type", "")
+                    if item.get("type") == "organic":
+                        results.append({
+                            "position": item.get("rank_group"),
+                            "title": item.get("title", ""),
+                            "description": item.get("description", ""),
+                            "url": item.get("url", ""),
+                            "domain": item.get("domain", ""),
+                        })
+        return results
 
-                    if item_type == "paid":
-                        paid.append({
+    async def _get_paid(self, keyword: str, location_code: int, language_code: str) -> List[Dict]:
+        """Fetch paid ad results."""
+        payload = [{
+            "keyword": keyword,
+            "location_code": location_code,
+            "language_code": language_code,
+            "depth": 10,
+        }]
+        data = await self._post("/serp/google/paid/live/regular", payload)
+        
+        results = []
+        for task in data.get("tasks") or []:
+            if task.get("status_code") != 20000:
+                continue
+            for result_set in task.get("result") or []:
+                for item in result_set.get("items") or []:
+                    if item.get("type") == "paid":
+                        results.append({
                             "position": item.get("rank_group"),
                             "title": item.get("title", ""),
                             "description": item.get("description", ""),
@@ -108,32 +119,40 @@ class DataForSEOClient:
                             "domain": item.get("domain", ""),
                             "display_url": item.get("breadcrumb", ""),
                         })
-                    elif item_type == "organic":
-                        organic.append({
-                            "position": item.get("rank_group"),
-                            "title": item.get("title", ""),
-                            "description": item.get("description", ""),
-                            "url": item.get("url", ""),
-                            "domain": item.get("domain", ""),
-                        })
-                    elif item_type in ("shopping", "commercial"):
-                        shopping.append({
-                            "title": item.get("title", ""),
-                            "price": item.get("price", ""),
-                            "merchant": item.get("seller", ""),
-                            "url": item.get("url", ""),
-                            "domain": item.get("domain", ""),
-                        })
+        return results
 
-        logger.info(f"SERP for '{keyword}': {len(paid)} paid, {len(organic)} organic, {len(shopping)} shopping")
+    async def get_serp(
+        self,
+        keyword: str,
+        location_code: int = 2840,
+        language_code: str = "en",
+        depth: int = 30,
+    ) -> Dict:
+        """
+        Get full SERP results: organic + paid ads, run in parallel.
+        """
+        organic_task = self._get_organic(keyword, location_code, language_code, depth)
+        paid_task = self._get_paid(keyword, location_code, language_code)
+        
+        organic, paid = await asyncio.gather(organic_task, paid_task, return_exceptions=True)
+        
+        # Handle any exceptions from parallel calls
+        if isinstance(organic, Exception):
+            logger.error(f"Organic SERP failed for '{keyword}': {organic}")
+            organic = []
+        if isinstance(paid, Exception):
+            logger.error(f"Paid SERP failed for '{keyword}': {paid}")
+            paid = []
+
+        logger.info(f"SERP for '{keyword}': {len(paid)} paid, {len(organic)} organic")
         return {
             "keyword": keyword,
             "paid": paid,
             "organic": organic,
-            "shopping": shopping,
+            "shopping": [],  # Shopping requires separate Google Shopping endpoint
         }
 
 
 def get_dataforseo_client() -> DataForSEOClient:
-    """Create a fresh client each time (settings may change on restart)."""
+    """Create a fresh client each time."""
     return DataForSEOClient()

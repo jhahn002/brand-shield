@@ -1,11 +1,11 @@
 """Debug endpoints to inspect raw DataForSEO data and threat analysis."""
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from app.database import get_db
+from fastapi import APIRouter
 from app.services.dataforseo import get_dataforseo_client
 from app.services.threat_analyzer import analyze_serp_data
+from app.config import get_settings
 from pydantic import BaseModel
+import httpx
+import base64
 
 router = APIRouter(prefix="/debug", tags=["debug"])
 
@@ -18,24 +18,50 @@ class SerpDebugRequest(BaseModel):
 
 @router.post("/raw-serp")
 async def raw_serp(body: SerpDebugRequest):
-    """Get raw SERP data from DataForSEO for a keyword. Shows exactly what the API returns."""
-    client = get_dataforseo_client()
-    serp_data = await client.get_serp(body.keyword)
+    """Get raw SERP data from DataForSEO — shows the FULL unprocessed API response."""
+    settings = get_settings()
+    creds = f"{settings.dataforseo_login}:{settings.dataforseo_password}"
+    encoded = base64.b64encode(creds.encode()).decode()
+    headers = {
+        "Authorization": f"Basic {encoded}",
+        "Content-Type": "application/json",
+    }
+
+    payload = [{
+        "keyword": body.keyword,
+        "location_code": 2840,
+        "language_code": "en",
+        "depth": 30,
+    }]
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
+            json=payload,
+            headers=headers,
+        )
+        raw = resp.json()
+
+    # Extract key info for debugging
+    task = raw.get("tasks", [{}])[0] if raw.get("tasks") else {}
     
     return {
         "keyword": body.keyword,
-        "paid_count": len(serp_data["paid"]),
-        "organic_count": len(serp_data["organic"]),
-        "shopping_count": len(serp_data["shopping"]),
-        "paid": serp_data["paid"],
-        "organic": serp_data["organic"][:10],  # First 10 organic
-        "shopping": serp_data["shopping"],
+        "http_status": resp.status_code,
+        "api_version": raw.get("version"),
+        "status_code": raw.get("status_code"),
+        "status_message": raw.get("status_message"),
+        "task_status_code": task.get("status_code"),
+        "task_status_message": task.get("status_message"),
+        "task_cost": task.get("cost"),
+        "result_count": task.get("result_count"),
+        "results": task.get("result"),
     }
 
 
 @router.post("/analyze-serp")
 async def analyze_serp(body: SerpDebugRequest):
-    """Get SERP data AND run threat analysis. Shows what gets flagged and why."""
+    """Get SERP data AND run threat analysis."""
     client = get_dataforseo_client()
     serp_data = await client.get_serp(body.keyword)
     

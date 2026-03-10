@@ -2,7 +2,6 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 
-// ─── Shared Revenue Logic (inline copy — also put in src/lib/revenue.js) ───
 const DEFAULTS = { aov: 70, conversionRate: 0.028 };
 const CTR_CURVES = {
   paid:     { 1: 0.070, 2: 0.035, 3: 0.025, 4: 0.018, 5: 0.012, 6: 0.008 },
@@ -50,7 +49,6 @@ function saveAssumptions(a) {
   try { localStorage.setItem("brandshield_assumptions", JSON.stringify(a)); } catch {}
 }
 
-// ─── Constants ───
 const STATUS_MAP = {
   detected:           { label: "Detected",      bg: "#FEF2F2", color: "#DC2626" },
   confirmed:          { label: "Confirmed",     bg: "#FEF2F2", color: "#DC2626" },
@@ -69,7 +67,6 @@ function fmt$(n)   { if (!n) return "$0"; return n >= 1000 ? `$${(n/1000).toFixe
 function fmtN(n)   { if (!n) return "—"; return n >= 1000 ? `${(n/1000).toFixed(1)}k` : n.toLocaleString(); }
 function ago(d)    { if (!d) return "—"; const days = Math.floor((Date.now() - new Date(d)) / 86400000); return days === 0 ? "Today" : days === 1 ? "Yesterday" : days < 7 ? `${days}d ago` : days < 30 ? `${Math.floor(days/7)}w ago` : `${Math.floor(days/30)}mo ago`; }
 
-// ─── Mock Data ───
 const MOCK = [
   { id:"t-01", domain:"beam-supplements-official.com",  threat_type:"paid_ad",            severity_score:94, status:"detected",           keyword_volume:12400, ad_position:2, revenue_at_risk_monthly:0, first_seen_at:"2026-02-12T09:00:00Z", last_seen_at:"2026-03-10T14:00:00Z" },
   { id:"t-02", domain:"beamsupplements-store.com",      threat_type:"organic_clone",       severity_score:87, status:"confirmed",           keyword_volume:8100,  ad_position:3, revenue_at_risk_monthly:0, first_seen_at:"2026-02-14T11:00:00Z", last_seen_at:"2026-03-09T16:00:00Z" },
@@ -81,7 +78,6 @@ const MOCK = [
   { id:"t-08", domain:"beam-supplements.info",          threat_type:"organic_clone",       severity_score:44, status:"resolved",           keyword_volume:1400,  ad_position:6, revenue_at_risk_monthly:0, first_seen_at:"2026-01-20T08:00:00Z", last_seen_at:"2026-02-28T10:00:00Z" },
 ];
 
-// ─── Main Component ───
 export default function ThreatsPage() {
   const [threats, setThreats]         = useState([]);
   const [loading, setLoading]         = useState(true);
@@ -101,7 +97,7 @@ export default function ThreatsPage() {
     if (!brandId) { setThreats(MOCK); setLoading(false); return; }
     const api = process.env.NEXT_PUBLIC_API_URL || "https://brave-embrace-production-f71d.up.railway.app";
     const headers = { "Content-Type": "application/json", ...(token ? { "Authorization": `Bearer ${token}` } : {}) };
-    fetch(`${api}/api/v1/brands/${brandId}/threats`, { headers })
+    fetch(`${api}/api/v1/threats/by-brand/${brandId}`, { headers })
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(d => setThreats(Array.isArray(d) ? d : (d.threats || MOCK)))
       .catch(() => setThreats(MOCK))
@@ -126,9 +122,9 @@ export default function ThreatsPage() {
     });
 
   const active = threats.filter(t => !["resolved","dismissed"].includes(t.status));
-  const totalRev     = active.reduce((s, t) => s + calcRevenue(t, assumptions), 0);
-  const totalClicks  = active.reduce((s, t) => s + calcClicks(t), 0);
-  const totalSales   = active.reduce((s, t) => s + calcSales(t, assumptions), 0);
+  const totalRev    = active.reduce((s, t) => s + calcRevenue(t, assumptions), 0);
+  const totalClicks = active.reduce((s, t) => s + calcClicks(t), 0);
+  const totalSales  = active.reduce((s, t) => s + calcSales(t, assumptions), 0);
 
   const Th = ({ label, col, w }) => (
     <th onClick={() => col && handleSort(col)} style={{ padding:"10px 16px", textAlign:"left", fontSize:11, fontWeight:600, color:"#64748B", letterSpacing:"0.05em", textTransform:"uppercase", whiteSpace:"nowrap", cursor:col?"pointer":"default", minWidth:w||"auto" }}>
@@ -146,7 +142,6 @@ export default function ThreatsPage() {
   return (
     <div style={{ padding:"28px 32px" }}>
 
-      {/* Header */}
       <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:20 }}>
         <div>
           <h1 style={{ fontSize:24, fontWeight:700, color:"#0F172A", margin:0 }}>Threat Queue</h1>
@@ -157,7 +152,6 @@ export default function ThreatsPage() {
         </button>
       </div>
 
-      {/* Assumptions Panel */}
       {showPanel && (
         <div style={{ background:"#FFFBEB", border:"1px solid #FDE68A", borderRadius:12, padding:"14px 20px", marginBottom:20, display:"flex", gap:24, alignItems:"center", flexWrap:"wrap" }}>
           <span style={{ fontSize:13, color:"#92400E", fontWeight:600 }}>📐 Revenue assumptions</span>
@@ -171,12 +165,11 @@ export default function ThreatsPage() {
         </div>
       )}
 
-      {/* Summary Cards */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:24 }}>
         {[
-          { label:"Monthly Revenue at Risk",    val:`$${totalRev.toLocaleString()}`,   sub:"across all active threats",    accent:"#DC2626", bg:"#FEF2F2" },
-          { label:"Est. Monthly Stolen Traffic", val:fmtN(totalClicks),                sub:"diverted clicks/month",        accent:"#D97706", bg:"#FFFBEB" },
-          { label:"Est. Lost Sales / Month",     val:fmtN(totalSales),                 sub:"estimated lost conversions",   accent:"#7C3AED", bg:"#F5F3FF" },
+          { label:"Monthly Revenue at Risk",    val:`$${totalRev.toLocaleString()}`,   sub:"across all active threats",  accent:"#DC2626", bg:"#FEF2F2" },
+          { label:"Est. Monthly Stolen Traffic", val:fmtN(totalClicks),                sub:"diverted clicks/month",      accent:"#D97706", bg:"#FFFBEB" },
+          { label:"Est. Lost Sales / Month",     val:fmtN(totalSales),                 sub:"estimated lost conversions", accent:"#7C3AED", bg:"#F5F3FF" },
         ].map(c => (
           <div key={c.label} style={{ background:c.bg, border:`1px solid ${c.accent}22`, borderRadius:12, padding:"16px 20px" }}>
             <div style={{ fontSize:26, fontWeight:700, color:c.accent, fontVariantNumeric:"tabular-nums" }}>{c.val}</div>
@@ -186,7 +179,6 @@ export default function ThreatsPage() {
         ))}
       </div>
 
-      {/* Filters */}
       <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
         <select value={statusFilter} onChange={e => setStatus(e.target.value)} style={{ padding:"7px 12px", borderRadius:8, border:"1px solid #E2E8F0", fontSize:13, color:"#374151", background:"white" }}>
           <option value="all">All Statuses</option>
@@ -199,7 +191,6 @@ export default function ThreatsPage() {
         <span style={{ marginLeft:"auto", fontSize:13, color:"#94A3B8" }}>{filtered.length} of {threats.length} threats</span>
       </div>
 
-      {/* Scrollable Table Wrapper */}
       <div style={{ background:"white", border:"1px solid #E2E8F0", borderRadius:12, overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", minWidth:900 }}>
           <thead>
@@ -222,33 +213,25 @@ export default function ThreatsPage() {
               const sales  = calcSales(t, assumptions);
               const gone   = ["resolved","dismissed"].includes(t.status);
               const st     = STATUS_MAP[t.status] || STATUS_MAP.detected;
-
               return (
                 <tr key={t.id}
                   style={{ borderBottom:"1px solid #F1F5F9", background:i%2===0?"white":"#FAFAFA" }}
                   onMouseEnter={e => e.currentTarget.style.background="#F0F9FF"}
                   onMouseLeave={e => e.currentTarget.style.background=i%2===0?"white":"#FAFAFA"}
                 >
-                  {/* Domain */}
                   <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>
                     <Link href={`/threats/${t.id}`} style={{ color:"#1E40AF", fontWeight:600, fontSize:13, textDecoration:"none", fontFamily:"monospace" }}>
                       {t.domain}
                     </Link>
                   </td>
-
-                  {/* Type */}
                   <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>
                     <span style={{ fontSize:12, color:"#374151" }}>{TYPE_ICON[t.threat_type]||"🔍"} {TYPE_LABEL[t.threat_type]||t.threat_type}</span>
                   </td>
-
-                  {/* Severity */}
                   <td style={{ padding:"12px 16px" }}>
                     <span style={{ display:"inline-block", minWidth:36, padding:"2px 8px", borderRadius:6, background:sBg(t.severity_score), color:sColor(t.severity_score), fontSize:13, fontWeight:700, textAlign:"center" }}>
                       {t.severity_score}
                     </span>
                   </td>
-
-                  {/* Monthly Traffic */}
                   <td style={{ padding:"12px 16px" }}>
                     {gone ? <span style={{ color:"#94A3B8" }}>—</span> : (
                       <div>
@@ -257,8 +240,6 @@ export default function ThreatsPage() {
                       </div>
                     )}
                   </td>
-
-                  {/* Est. Sales */}
                   <td style={{ padding:"12px 16px" }}>
                     {gone ? <span style={{ color:"#94A3B8" }}>—</span> : (
                       <div>
@@ -267,8 +248,6 @@ export default function ThreatsPage() {
                       </div>
                     )}
                   </td>
-
-                  {/* Revenue at Risk */}
                   <td style={{ padding:"12px 16px" }}>
                     {gone ? <span style={{ color:"#94A3B8" }}>—</span> : (
                       <div>
@@ -279,16 +258,10 @@ export default function ThreatsPage() {
                       </div>
                     )}
                   </td>
-
-                  {/* Status */}
                   <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>
                     <span style={{ display:"inline-block", padding:"3px 10px", borderRadius:20, background:st.bg, color:st.color, fontSize:11, fontWeight:600 }}>{st.label}</span>
                   </td>
-
-                  {/* First Seen */}
                   <td style={{ padding:"12px 16px", fontSize:12, color:"#64748B", whiteSpace:"nowrap" }}>{ago(t.first_seen_at)}</td>
-
-                  {/* Last Seen */}
                   <td style={{ padding:"12px 16px", fontSize:12, color:"#64748B", whiteSpace:"nowrap" }}>{ago(t.last_seen_at)}</td>
                 </tr>
               );

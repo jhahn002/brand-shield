@@ -16,17 +16,21 @@ function getCTR(threatType, position = 2) {
   return curve[position] !== undefined ? curve[position] : curve[keys[keys.length - 1]];
 }
 function calcRevenue(t, a = DEFAULTS) {
-  if (t.revenue_at_risk_monthly > 0) return t.revenue_at_risk_monthly;
-  const vol = t.keyword_volume || t.monthly_volume || t.search_volume || 0;
+  if (parseFloat(t.revenue_at_risk_monthly) > 0) return Math.round(parseFloat(t.revenue_at_risk_monthly));
+  const vol = parseInt(t.keyword_volume || t.monthly_volume || t.search_volume || t.volume || 0, 10);
   if (!vol) return 0;
-  return Math.round(vol * getCTR(t.threat_type, t.ad_position || 2) * (a.conversionRate !== undefined ? a.conversionRate : DEFAULTS.conversionRate) * (a.aov !== undefined ? a.aov : DEFAULTS.aov));
+  const pos = parseInt(t.ad_position || t.position || t.result_position || 2, 10);
+  const convRate = parseFloat(a.conversionRate) || DEFAULTS.conversionRate;
+  const aov = parseFloat(a.aov) || DEFAULTS.aov;
+  return Math.round(vol * getCTR(t.threat_type, pos) * convRate * aov);
 }
 function calcClicks(t) {
-  const vol = t.keyword_volume || t.monthly_volume || t.search_volume || 0;
-  return Math.round(vol * getCTR(t.threat_type, t.ad_position || 2));
+  const vol = parseInt(t.keyword_volume || t.monthly_volume || t.search_volume || t.volume || 0, 10);
+  const pos = parseInt(t.ad_position || t.position || t.result_position || 2, 10);
+  return Math.round(vol * getCTR(t.threat_type, pos));
 }
 function calcSales(t, a = DEFAULTS) {
-  return Math.round(calcClicks(t) * (a.conversionRate !== undefined ? a.conversionRate : DEFAULTS.conversionRate));
+  return Math.round(calcClicks(t) * (parseFloat(a.conversionRate) || DEFAULTS.conversionRate));
 }
 function loadAssumptions() {
   try {
@@ -113,9 +117,11 @@ export default function ThreatDetailPage() {
   useEffect(() => {
     const id = params && params.id;
     if (!id) { setThreat(MOCK_THREAT); setLoading(false); return; }
+    const token = typeof window !== "undefined" ? (localStorage.getItem("bs_token") || "") : "";
     const api = process.env.NEXT_PUBLIC_API_URL || "https://brave-embrace-production-f71d.up.railway.app";
-    fetch(`${api}/api/v1/threats/${id}`)
-      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+    const headers = { "Content-Type": "application/json", ...(token ? { "Authorization": `Bearer ${token}` } : {}) };
+    fetch(`${api}/api/v1/threats/${id}`, { headers })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(d => setThreat(d))
       .catch(() => setThreat(MOCK_THREAT))
       .finally(() => setLoading(false));
@@ -130,7 +136,44 @@ export default function ThreatDetailPage() {
   if (loading) return <div style={{ padding: 32, color: "#94A3B8" }}>Loading threat details…</div>;
   if (!threat)  return <div style={{ padding: 32, color: "#EF4444" }}>Threat not found.</div>;
 
-  const T = threat;
+  // Normalize real API evidence array into the shape the UI expects
+  function normalizeFromEvidence(threat) {
+    const ev = threat.evidence || [];
+    const byType = {};
+    ev.forEach(e => { byType[e.evidence_type] = e.data || {}; });
+
+    // Extract keyword_volume and ad_position from evidence data
+    const adCopyData  = byType["ad_copy"] || {};
+    const whoisData   = byType["whois"] || {};
+    const contentSim  = byType["content_similarity"] || {};
+    const visualSim   = byType["visual_similarity"] || {};
+    const techData    = byType["tech_stack"] || {};
+
+    const keyword_volume = threat.keyword_volume || adCopyData.keyword_volume || 0;
+    const ad_position    = threat.ad_position    || adCopyData.position        || adCopyData.ad_position || 3;
+
+    const ad_copy = adCopyData.title ? adCopyData : null;
+    const whois   = whoisData.registrar ? {
+      registrar:         whoisData.registrar || "Unknown",
+      registered:        whoisData.created_date || whoisData.registered || "Unknown",
+      age_days:          whoisData.age_days || (whoisData.created_date ? Math.floor((Date.now() - new Date(whoisData.created_date)) / 86400000) : null),
+      ip:                whoisData.ip || techData.ip || null,
+      hosting:           whoisData.hosting || techData.hosting || null,
+      country:           whoisData.registrant_country || whoisData.country || null,
+      ssl_issuer:        whoisData.ssl_issuer || null,
+      privacy_protected: whoisData.registrant_org ? whoisData.registrant_org.toLowerCase().includes("privacy") : true,
+    } : null;
+
+    const similarity = (contentSim.score || visualSim.score) ? {
+      text:   contentSim.score   || 0,
+      visual: visualSim.score    || 0,
+      domain: threat.domain_deceptiveness || 0,
+    } : threat.similarity || null;
+
+    return { ...threat, keyword_volume, ad_position, ad_copy, whois, similarity };
+  }
+
+  const T = normalizeFromEvidence(threat);
   const revenue = calcRevenue(T, assumptions);
   const clicks  = calcClicks(T);
   const sales   = calcSales(T, assumptions);

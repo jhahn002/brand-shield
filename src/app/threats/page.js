@@ -28,7 +28,15 @@ function calcSales(t, a = DEFAULTS) {
   return Math.round(calcClicks(t) * (a.conversionRate ?? DEFAULTS.conversionRate));
 }
 function loadAssumptions() {
-  try { const r = localStorage.getItem("brandshield_assumptions"); return r ? { ...DEFAULTS, ...JSON.parse(r) } : { ...DEFAULTS }; } catch { return { ...DEFAULTS }; }
+  try {
+    const r = localStorage.getItem("brandshield_assumptions");
+    if (!r) return { aov: DEFAULTS.aov, conversionRate: DEFAULTS.conversionRate };
+    const parsed = JSON.parse(r);
+    return {
+      aov: parseFloat(parsed.aov) || DEFAULTS.aov,
+      conversionRate: parseFloat(parsed.conversionRate) || DEFAULTS.conversionRate,
+    };
+  } catch { return { aov: DEFAULTS.aov, conversionRate: DEFAULTS.conversionRate }; }
 }
 function saveAssumptions(a) {
   try { localStorage.setItem("brandshield_assumptions", JSON.stringify(a)); } catch {}
@@ -281,7 +289,7 @@ export default function ThreatsPage() {
       </div>
 
       <p style={{ fontSize:11, color:"#94A3B8", marginTop:10, textAlign:"right" }}>
-        AOV ${assumptions.aov} · Conv. {(assumptions.conversionRate*100).toFixed(1)}% · Position-based CTR curves ·{" "}
+        AOV ${Number(assumptions.aov)} · Conv. {(Number(assumptions.conversionRate)*100).toFixed(1)}% · Position-based CTR curves ·{" "}
         <button onClick={() => setShowPanel(true)} style={{ background:"none", border:"none", color:"#3B82F6", cursor:"pointer", fontSize:11, textDecoration:"underline" }}>Adjust</button>
       </p>
     </div>

@@ -1,6 +1,5 @@
 "use client";
 import { useState } from "react";
-import DashboardShell from "@/components/DashboardShell";
 import { BRAND, WHITELISTED, TEAM } from "@/lib/mock-data";
 import { useMounted } from "@/hooks/useApi";
 
@@ -38,7 +37,7 @@ export default function SettingsPage() {
   ];
 
   return (
-    <DashboardShell>
+    <div>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 20px", color: "#0F172A" }}>Settings</h1>
 
       <div style={{ display: "flex", gap: 0, marginBottom: 24, borderBottom: "1px solid #F1F5F9" }}>
@@ -180,6 +179,6 @@ export default function SettingsPage() {
           </SettingRow>
         </div>
       )}
-    </DashboardShell>
+    </div>
   );
 }

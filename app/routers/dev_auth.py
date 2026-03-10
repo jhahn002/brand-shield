@@ -2,13 +2,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.core.database import get_db
-from app.core.auth import create_access_token
-from app.models.models import Organization, User, UserRole
-from app.models.enums import UserRole
-import uuid
+from app.database import get_db
+from app.models import Organization, User, UserRole, PlanTier
 
 router = APIRouter(prefix="/dev", tags=["dev"])
+
 
 @router.post("/token")
 async def dev_token(org_id: str, db: AsyncSession = Depends(get_db)):
@@ -17,28 +15,23 @@ async def dev_token(org_id: str, db: AsyncSession = Depends(get_db)):
     org = result.scalar_one_or_none()
     if not org:
         raise HTTPException(status_code=404, detail="Org not found")
-    
-    # Create or find a user for this org
+
     user_result = await db.execute(select(User).where(User.org_id == org.id))
     user = user_result.scalar_one_or_none()
-    
+
     if not user:
-        # Create a placeholder user
         user = User(
             org_id=org.id,
             email=org.email,
             hashed_password="dev",
             name="Dev User",
             role=UserRole.ACCOUNT_OWNER,
-            can_initiate_takedowns=True,
-            can_dismiss_threats=True,
-            can_manage_whitelist=True,
-            can_manage_keywords=True,
-            can_refresh_fingerprints=True,
         )
         db.add(user)
         await db.commit()
         await db.refresh(user)
-    
+
+    # Import auth here to avoid circular imports
+    from app.auth import create_access_token
     token = create_access_token(str(user.id), str(org.id))
     return {"access_token": token, "org_id": str(org.id), "user_id": str(user.id)}

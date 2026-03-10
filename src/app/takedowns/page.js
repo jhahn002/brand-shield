@@ -1,6 +1,5 @@
 "use client";
 import { useState } from "react";
-import DashboardShell from "@/components/DashboardShell";
 import { useMounted } from "@/hooks/useApi";
 import Link from "next/link";
 
@@ -105,14 +104,12 @@ const statusConfig = {
 
 const StepTimeline = ({ steps }) => {
   const currentIdx = steps.filter(s => s.done).length - 1;
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0, padding: "4px 0" }}>
       {steps.map((step, i) => {
         const isCurrent = i === currentIdx && !steps.every(s => s.done);
         return (
           <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-            {/* Dot + line */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 20, flexShrink: 0 }}>
               <div style={{
                 width: isCurrent ? 22 : 18, height: isCurrent ? 22 : 18, borderRadius: "50%",
@@ -131,7 +128,6 @@ const StepTimeline = ({ steps }) => {
                 }} />
               )}
             </div>
-            {/* Label + date */}
             <div style={{ paddingBottom: i < steps.length - 1 ? 14 : 0, minHeight: i < steps.length - 1 ? 42 : "auto" }}>
               <div style={{
                 fontSize: 13, fontWeight: step.done ? 600 : 400,
@@ -159,7 +155,6 @@ const TakedownCard = ({ td, mounted, idx }) => {
       boxShadow: "0 1px 3px rgba(0,0,0,0.02)", overflow: "hidden",
       opacity: mounted ? 1 : 0, animation: mounted ? `fadeIn 0.3s ease ${idx * 0.04}s both` : "none",
     }}>
-      {/* Card Header */}
       <div style={{ padding: "16px 20px", borderBottom: "1px solid #F1F5F9" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
           <div>
@@ -176,7 +171,6 @@ const TakedownCard = ({ td, mounted, idx }) => {
             background: cfg.bg, color: cfg.color,
           }}>{cfg.label}</span>
         </div>
-        {/* Revenue at risk */}
         <div style={{
           display: "flex", alignItems: "center", gap: 6, padding: "8px 12px",
           borderRadius: 8, background: td.status === "resolved" ? "#F8FAFB" : "#FEF2F2",
@@ -193,8 +187,6 @@ const TakedownCard = ({ td, mounted, idx }) => {
           <span style={{ fontSize: 11, color: td.status === "resolved" ? "#94A3B8" : "#DC2626" }}>/mo</span>
         </div>
       </div>
-
-      {/* Step Timeline */}
       <div style={{ padding: "16px 20px" }}>
         <StepTimeline steps={td.steps} />
       </div>
@@ -231,7 +223,7 @@ export default function TakedownsPage() {
   );
 
   return (
-    <DashboardShell>
+    <div>
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
         <div>
@@ -361,6 +353,6 @@ export default function TakedownsPage() {
           </table>
         </div>
       )}
-    </DashboardShell>
+    </div>
   );
 }

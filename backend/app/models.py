@@ -96,6 +96,12 @@ class BillingEventType(str, enum.Enum):
     takedown_bounty = "takedown_bounty"
 
 
+class UserRole(str, enum.Enum):
+    account_owner = "account_owner"
+    brand_manager = "brand_manager"
+    brand_viewer = "brand_viewer"
+
+
 # ── Models ─────────────────────────────────────────────
 
 class Organization(Base):
@@ -112,6 +118,22 @@ class Organization(Base):
     # Relationships
     brands = relationship("Brand", back_populates="organization", cascade="all, delete-orphan")
     billing_events = relationship("BillingEvent", back_populates="organization")
+    users = relationship("User", back_populates="organization", cascade="all, delete-orphan")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    email = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=True)
+    role = Column(SAEnum(UserRole), default=UserRole.account_owner)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+
+    # Relationships
+    organization = relationship("Organization", back_populates="users")
 
 
 class Brand(Base):

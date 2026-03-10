@@ -29,7 +29,15 @@ function calcSales(t, a = DEFAULTS) {
   return Math.round(calcClicks(t) * (a.conversionRate !== undefined ? a.conversionRate : DEFAULTS.conversionRate));
 }
 function loadAssumptions() {
-  try { const r = typeof window !== "undefined" && localStorage.getItem("brandshield_assumptions"); return r ? { ...DEFAULTS, ...JSON.parse(r) } : { ...DEFAULTS }; } catch { return { ...DEFAULTS }; }
+  try {
+    const r = typeof window !== "undefined" && localStorage.getItem("brandshield_assumptions");
+    if (!r) return { aov: DEFAULTS.aov, conversionRate: DEFAULTS.conversionRate };
+    const parsed = JSON.parse(r);
+    return {
+      aov: parseFloat(parsed.aov) || DEFAULTS.aov,
+      conversionRate: parseFloat(parsed.conversionRate) || DEFAULTS.conversionRate,
+    };
+  } catch { return { aov: DEFAULTS.aov, conversionRate: DEFAULTS.conversionRate }; }
 }
 function saveAssumptions(a) { try { localStorage.setItem("brandshield_assumptions", JSON.stringify(a)); } catch {} }
 
@@ -273,8 +281,8 @@ export default function ThreatDetailPage() {
                 {[
                   ["Keyword Volume",   `${vol.toLocaleString()}/mo`],
                   ["Est. CTR",         `${(ctr * 100).toFixed(1)}%`],
-                  ["Conversion Rate",  `${(assumptions.conversionRate * 100).toFixed(1)}%`],
-                  ["AOV",              `$${assumptions.aov.toFixed(2)}`],
+                  ["Conversion Rate",  `${(Number(assumptions.conversionRate) * 100).toFixed(1)}%`],
+                  ["AOV",              `$${Number(assumptions.aov).toFixed(2)}`],
                 ].map(([label, val]) => (
                   <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #FECACA22" }}>
                     <span style={{ fontSize: 13, color: "#991B1B" }}>{label}</span>

@@ -8,7 +8,6 @@ from app.auth import create_access_token
 
 router = APIRouter(prefix="/dev", tags=["dev"])
 
-
 @router.post("/token")
 async def dev_token(org_id: str, db: AsyncSession = Depends(get_db)):
     """Mint a JWT for an existing org. DEV ONLY."""
@@ -16,21 +15,18 @@ async def dev_token(org_id: str, db: AsyncSession = Depends(get_db)):
     org = result.scalar_one_or_none()
     if not org:
         raise HTTPException(status_code=404, detail="Org not found")
-
     user_result = await db.execute(select(User).where(User.org_id == org.id))
     user = user_result.scalar_one_or_none()
-
     if not user:
         user = User(
             org_id=org.id,
             email=org.email,
             hashed_password="dev",
             name="Dev User",
-            role=UserRole.ACCOUNT_OWNER,
+            role=UserRole.account_owner,
         )
         db.add(user)
         await db.commit()
         await db.refresh(user)
-
     token = create_access_token(str(user.id), str(org.id))
     return {"access_token": token, "org_id": str(org.id), "user_id": str(user.id)}

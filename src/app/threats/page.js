@@ -11,7 +11,8 @@ const CTR_CURVES = {
 };
 function getCTR(threatType, position = 2) {
   const curve = threatType === "paid_ad" ? CTR_CURVES.paid : threatType === "shopping_listing" ? CTR_CURVES.shopping : CTR_CURVES.organic;
-  return curve[position] ?? curve[Object.keys(curve).at(-1)];
+  const keys = Object.keys(curve);
+  return curve[position] ?? curve[keys[keys.length - 1]];
 }
 function calcRevenue(t, a = DEFAULTS) {
   if (t.revenue_at_risk_monthly > 0) return t.revenue_at_risk_monthly;

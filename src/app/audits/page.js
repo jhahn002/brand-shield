@@ -1,6 +1,5 @@
 "use client";
 import { useState } from "react";
-import DashboardShell from "@/components/DashboardShell";
 import { useMounted } from "@/hooks/useApi";
 
 const AUDITS = [
@@ -14,7 +13,7 @@ export default function AuditsPage() {
   const [showCreate, setShowCreate] = useState(false);
 
   return (
-    <DashboardShell>
+    <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: "#0F172A" }}>Prospecting Audits</h1>
@@ -96,6 +95,6 @@ export default function AuditsPage() {
           </div>
         ))}
       </div>
-    </DashboardShell>
+    </div>
   );
 }

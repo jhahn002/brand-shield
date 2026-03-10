@@ -8,7 +8,6 @@ const NAV = [
     { icon: "📊", label: "Overview", href: "/dashboard" },
     { icon: "⚠️", label: "Threats", href: "/threats", badge: () => DASHBOARD.activeThreats },
     { icon: "🔑", label: "Keywords", href: "/keywords" },
-    { icon: "🔍", label: "SERP Viewer", href: "/serp" },
   ]},
   { section: "Actions", items: [
     { icon: "📤", label: "Takedowns", href: "/takedowns", badge: () => DASHBOARD.pendingTakedowns },

@@ -1,6 +1,5 @@
 "use client";
 import { useState } from "react";
-import DashboardShell from "@/components/DashboardShell";
 import { KEYWORDS } from "@/lib/mock-data";
 import { useMounted } from "@/hooks/useApi";
 
@@ -41,7 +40,7 @@ export default function SerpViewerPage() {
   const threatenedKws = KEYWORDS.filter(k => k.threats > 0).slice(0, 8);
 
   return (
-    <DashboardShell>
+    <div>
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: "#0F172A" }}>SERP Viewer</h1>
         <p style={{ fontSize: 13, color: "#94A3B8", margin: "4px 0 0" }}>Visual reconstruction of search results with threat highlighting</p>
@@ -142,6 +141,6 @@ export default function SerpViewerPage() {
           </div>
         </div>
       </div>
-    </DashboardShell>
+    </div>
   );
 }

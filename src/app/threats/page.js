@@ -12,20 +12,28 @@ const CTR_CURVES = {
 function getCTR(threatType, position = 2) {
   const curve = threatType === "paid_ad" ? CTR_CURVES.paid : threatType === "shopping_listing" ? CTR_CURVES.shopping : CTR_CURVES.organic;
   const keys = Object.keys(curve);
-  return curve[position] ?? curve[keys[keys.length - 1]];
+  return curve[position] !== undefined ? curve[position] : curve[keys[keys.length - 1]];
+}
+function getVolume(t) {
+  return parseInt(t.keyword_volume || t.monthly_volume || t.search_volume || t.volume || 0, 10);
+}
+function getPosition(t) {
+  return parseInt(t.ad_position || t.position || t.result_position || 2, 10);
 }
 function calcRevenue(t, a = DEFAULTS) {
-  if (t.revenue_at_risk_monthly > 0) return t.revenue_at_risk_monthly;
-  const vol = t.keyword_volume || t.monthly_volume || t.search_volume || 0;
+  if (parseFloat(t.revenue_at_risk_monthly) > 0) return Math.round(parseFloat(t.revenue_at_risk_monthly));
+  const vol = getVolume(t);
   if (!vol) return 0;
-  return Math.round(vol * getCTR(t.threat_type, t.ad_position || 2) * (a.conversionRate ?? DEFAULTS.conversionRate) * (a.aov ?? DEFAULTS.aov));
+  const convRate = parseFloat(a.conversionRate) || DEFAULTS.conversionRate;
+  const aov = parseFloat(a.aov) || DEFAULTS.aov;
+  return Math.round(vol * getCTR(t.threat_type, getPosition(t)) * convRate * aov);
 }
 function calcClicks(t) {
-  const vol = t.keyword_volume || t.monthly_volume || t.search_volume || 0;
-  return Math.round(vol * getCTR(t.threat_type, t.ad_position || 2));
+  const vol = getVolume(t);
+  return Math.round(vol * getCTR(t.threat_type, getPosition(t)));
 }
 function calcSales(t, a = DEFAULTS) {
-  return Math.round(calcClicks(t) * (a.conversionRate ?? DEFAULTS.conversionRate));
+  return Math.round(calcClicks(t) * (parseFloat(a.conversionRate) || DEFAULTS.conversionRate));
 }
 function loadAssumptions() {
   try {
@@ -87,11 +95,15 @@ export default function ThreatsPage() {
   useEffect(() => { setAssumptions(loadAssumptions()); }, []);
 
   useEffect(() => {
-    const brandId = localStorage.getItem("brandshield_brand_id") || "";
+    const ctx = (() => { try { return JSON.parse(localStorage.getItem("brandshield_context") || "{}"); } catch { return {}; } })();
+    const brandId = ctx.brandId || localStorage.getItem("brandshield_brand_id") || "";
+    const token   = localStorage.getItem("bs_token") || "";
+    if (!brandId) { setThreats(MOCK); setLoading(false); return; }
     const api = process.env.NEXT_PUBLIC_API_URL || "https://brave-embrace-production-f71d.up.railway.app";
-    fetch(`${api}/api/v1/brands/${brandId}/threats`, { headers: { "Content-Type": "application/json" } })
-      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-      .then(d => setThreats(d.threats || d))
+    const headers = { "Content-Type": "application/json", ...(token ? { "Authorization": `Bearer ${token}` } : {}) };
+    fetch(`${api}/api/v1/brands/${brandId}/threats`, { headers })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(d => setThreats(Array.isArray(d) ? d : (d.threats || MOCK)))
       .catch(() => setThreats(MOCK))
       .finally(() => setLoading(false));
   }, []);

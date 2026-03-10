@@ -1,8 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { THREAT_DETAIL as T } from "@/lib/mock-data";
 import { useMounted } from "@/hooks/useApi";
 import Link from "next/link";
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const Bar = ({ label, value, color }) => (
   <div style={{ marginBottom: 14 }}>
@@ -16,10 +18,10 @@ const Bar = ({ label, value, color }) => (
   </div>
 );
 
-const Row = ({ label, value, mono }) => (
+const Row = ({ label, value, mono, highlight }) => (
   <div style={{ display: "flex", justifyContent: "space-between", padding: "9px 0", borderBottom: "1px solid #F8FAFB" }}>
     <span style={{ fontSize: 13, color: "#94A3B8" }}>{label}</span>
-    <span style={{ fontSize: 13, color: "#1E293B", fontWeight: 500, fontFamily: mono ? "var(--font-mono)" : "inherit", textAlign: "right", maxWidth: "60%" }}>{value}</span>
+    <span style={{ fontSize: 13, color: highlight || "#1E293B", fontWeight: 500, fontFamily: mono ? "var(--font-mono)" : "inherit", textAlign: "right", maxWidth: "65%" }}>{value}</span>
   </div>
 );
 
@@ -38,50 +40,124 @@ const ScreenshotBox = ({ label, domain, isBad }) => (
   </div>
 );
 
-// Progress bar for takedown status: 0=draft, 1=submitted, 2=acknowledged, 3=resolved
-const TakedownProgress = ({ status }) => {
+const TakedownProgressBar = ({ status }) => {
   const step = status === "resolved" ? 3 : status === "acknowledged" ? 2 : status === "submitted" ? 1 : 0;
   const pct = (step / 3) * 100;
   const color = step === 3 ? "#16A34A" : step >= 1 ? "#2563EB" : "#E2E8F0";
+  const isActive = step > 0 && step < 3;
   return (
-    <div style={{ height: 4, borderRadius: 2, background: "#F1F5F9", overflow: "hidden", marginTop: 6 }}>
-      <div style={{ width: `${pct}%`, height: "100%", borderRadius: 2, background: color, transition: "width 0.5s ease" }} />
+    <div style={{ position: "relative", height: 4, borderRadius: 2, background: "#F1F5F9", overflow: "hidden", marginTop: 6 }}>
+      <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${pct}%`, borderRadius: 2, background: color, transition: "width 0.5s ease" }} />
+      {isActive && (
+        <div style={{
+          position: "absolute", left: 0, top: 0, height: "100%", width: `${pct}%`, borderRadius: 2,
+          background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.5) 50%, transparent 100%)",
+          backgroundSize: "200% 100%", animation: "shimmer 1.8s infinite",
+        }} />
+      )}
+      <style>{`@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }`}</style>
     </div>
   );
 };
 
-const DEFAULT_ASSUMPTIONS = {
-  volume: "12,400",
-  ctr: "3.5",
-  convRate: "2.8",
-  aov: "67.50",
-};
+// ─── Dynamic channel logic ────────────────────────────────────────────────────
+// Channels shown depend on threat_type — not a static list
+function getRelevantChannels(threatType, hasCopiedContent, hasDomainImpersonation) {
+  const channels = [];
+  if (threatType === "paid_ad" || threatType === "organic_misleading") {
+    channels.push({ channel: "Google Ads Trademark", icon: "🎯", reason: "Using brand name/trademark in paid ads", status: "draft" });
+  }
+  if (hasCopiedContent) {
+    channels.push({ channel: "Google Search DMCA", icon: "🔍", reason: "Copied product descriptions or marketing copy", status: "draft" });
+    channels.push({ channel: "Hosting Provider DMCA", icon: "🖥️", reason: "Cloned site content hosted on their servers", status: "draft" });
+  }
+  if (hasDomainImpersonation) {
+    channels.push({ channel: "Registrar Abuse Report", icon: "🌐", reason: "Domain designed to impersonate brand", status: "draft" });
+  }
+  if (threatType === "shopping_listing") {
+    channels.push({ channel: "Google Shopping Report", icon: "🛒", reason: "Fraudulent merchant listing in Shopping results", status: "draft" });
+  }
+  // DMCA direct if site has contact info — always add as optional
+  channels.push({ channel: "Direct DMCA to Operator", icon: "📤", reason: "Formal DMCA notice to site operator", status: "draft" });
+  return channels;
+}
+
+// ─── Default assumptions (fallback if nothing in localStorage) ───────────────
+const FALLBACK = { volume: "12,400", ctr: "3.5", convRate: "2.8", aov: "67.50" };
+const LS_KEY = "brandshield_assumptions"; // keyed to brand in production
+
+function loadAssumptions() {
+  if (typeof window === "undefined") return FALLBACK;
+  try {
+    const stored = localStorage.getItem(LS_KEY);
+    return stored ? JSON.parse(stored) : FALLBACK;
+  } catch { return FALLBACK; }
+}
+
+function saveAssumptions(a) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(a)); } catch {}
+}
 
 function calcRevenue(a) {
-  const vol = parseFloat(a.volume.replace(/,/g, "")) || 0;
+  const vol = parseFloat(String(a.volume).replace(/,/g, "")) || 0;
   const ctr = parseFloat(a.ctr) / 100 || 0;
   const conv = parseFloat(a.convRate) / 100 || 0;
   const aov = parseFloat(a.aov) || 0;
   return Math.round(vol * ctr * conv * aov);
 }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function ThreatDetailPage() {
   const mounted = useMounted();
   const [tab, setTab] = useState("evidence");
   const [editing, setEditing] = useState(false);
-  const [assumptions, setAssumptions] = useState(DEFAULT_ASSUMPTIONS);
-  const [draft, setDraft] = useState(DEFAULT_ASSUMPTIONS);
+  const [assumptions, setAssumptions] = useState(FALLBACK);
+  const [draft, setDraft] = useState(FALLBACK);
   const [saved, setSaved] = useState(false);
+
+  // Load from localStorage on mount — avoids hydration mismatch
+  useEffect(() => {
+    const loaded = loadAssumptions();
+    setAssumptions(loaded);
+    setDraft(loaded);
+  }, []);
 
   const sc = (v) => v >= 0.7 ? "#EF4444" : v >= 0.4 ? "#F59E0B" : "#22C55E";
   const revenue = calcRevenue(assumptions);
 
-  const handleSave = (setDefault) => {
+  const handleRecalculate = () => {
     setAssumptions(draft);
     setEditing(false);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    // In production: if setDefault, persist to brand settings via API
+    setTimeout(() => setSaved(false), 2500);
+    // Does NOT persist — just updates this view
+  };
+
+  const handleSetDefault = () => {
+    setAssumptions(draft);
+    saveAssumptions(draft); // persists to localStorage — survives page navigation
+    setEditing(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+    // TODO: also POST to /api/v1/brands/:id to persist server-side
+  };
+
+  // Dynamic channels based on threat evidence
+  const channels = getRelevantChannels(
+    T.threatType || "paid_ad",
+    T.similarity?.text > 0.5,    // high text similarity = copied content
+    T.similarity?.domain > 0.6,  // high domain score = impersonation
+  );
+
+  const statusBadge = (status) => {
+    const cfg = {
+      draft: { label: "Draft", color: "#94A3B8", bg: "#F1F5F9" },
+      submitted: { label: "Submitted", color: "#D97706", bg: "#FFFBEB" },
+      acknowledged: { label: "In Review", color: "#2563EB", bg: "#EFF6FF" },
+      resolved: { label: "Resolved", color: "#16A34A", bg: "#F0FDF4" },
+    }[status] || { label: status, color: "#94A3B8", bg: "#F1F5F9" };
+    return <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 5, background: cfg.bg, color: cfg.color }}>{cfg.label}</span>;
   };
 
   return (
@@ -122,6 +198,7 @@ export default function ThreatDetailPage() {
       {tab === "evidence" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 20 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
             {/* Screenshots */}
             <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
               <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 16px", color: "#0F172A" }}>Visual Comparison</h3>
@@ -130,6 +207,7 @@ export default function ThreatDetailPage() {
                 <ScreenshotBox label="Bad Actor" domain={T.domain} isBad />
               </div>
             </div>
+
             {/* Ad Copy */}
             <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
               <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 14px", color: "#0F172A" }}>Captured Ad</h3>
@@ -143,7 +221,8 @@ export default function ThreatDetailPage() {
                 </div>
               </div>
             </div>
-            {/* WHOIS */}
+
+            {/* WHOIS — now with IP + location */}
             <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
               <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 12px", color: "#0F172A" }}>WHOIS & Infrastructure</h3>
               <Row label="Registrar" value={T.whois.registrar} />
@@ -152,6 +231,11 @@ export default function ThreatDetailPage() {
               <Row label="Registrant" value={T.whois.registrant} />
               <Row label="Country" value={T.whois.country} mono />
               <Row label="Name Servers" value={T.whois.nameServers[0]} mono />
+              {/* NEW: IP + hosting geo */}
+              <Row label="IP Address" value="185.220.101.47" mono highlight="#EF4444" />
+              <Row label="Hosting Location" value="🇷🇺 Moscow, Russia (AS60462)" mono />
+              <Row label="Hosting Provider" value="Selectel Ltd." />
+              <div style={{ height: 1, background: "#F1F5F9", margin: "4px 0" }} />
               <Row label="Tech Stack" value={T.tech.join(", ")} />
               <Row label="Payments" value={T.payments.join(", ")} />
               <Row label="Checkout" value="✅ Active" />
@@ -161,10 +245,10 @@ export default function ThreatDetailPage() {
           {/* Right Column */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
-            {/* Revenue at Risk Card */}
+            {/* Revenue at Risk */}
             <div style={{ background: "linear-gradient(135deg, #FEF2F2, #FFF7ED)", borderRadius: 16, padding: 24, border: "1px solid #FECACA" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                <div style={{ textAlign: "left" }}>
+                <div>
                   <div style={{ fontSize: 36, fontWeight: 700, color: "#DC2626", fontFamily: "var(--font-mono)", letterSpacing: "-0.03em" }}>${revenue.toLocaleString()}</div>
                   <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>estimated monthly revenue at risk</div>
                 </div>
@@ -174,7 +258,6 @@ export default function ThreatDetailPage() {
                   </button>
                 )}
               </div>
-
               <div style={{ marginTop: 14, fontSize: 12 }}>
                 {editing ? (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -198,14 +281,14 @@ export default function ThreatDetailPage() {
                       </div>
                     ))}
                     <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                      <button onClick={() => handleSave(false)} style={{ flex: 1, padding: "7px 0", borderRadius: 6, fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", background: "#DC2626", color: "white" }}>Recalculate</button>
-                      <button onClick={() => handleSave(true)} style={{ flex: 1.4, padding: "7px 0", borderRadius: 6, fontSize: 11, fontWeight: 600, border: "1px solid #FECACA", cursor: "pointer", background: "white", color: "#92400E" }}>Set as Default</button>
+                      <button onClick={handleRecalculate} style={{ flex: 1, padding: "7px 0", borderRadius: 6, fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", background: "#DC2626", color: "white" }}>Recalculate</button>
+                      <button onClick={handleSetDefault} style={{ flex: 1.4, padding: "7px 0", borderRadius: 6, fontSize: 11, fontWeight: 600, border: "1px solid #FECACA", cursor: "pointer", background: "white", color: "#92400E" }}>Set as Default ✓</button>
                     </div>
                     <button onClick={() => setEditing(false)} style={{ padding: "5px 0", borderRadius: 6, fontSize: 11, border: "none", cursor: "pointer", background: "transparent", color: "#94A3B8" }}>Cancel</button>
                   </div>
                 ) : (
                   <div>
-                    {saved && <div style={{ fontSize: 11, color: "#16A34A", marginBottom: 8, fontWeight: 500 }}>✓ Updated</div>}
+                    {saved && <div style={{ fontSize: 11, color: "#16A34A", marginBottom: 8, fontWeight: 500 }}>✓ Saved as default for all threats</div>}
                     <Row label="Keyword Volume" value={`${assumptions.volume}/mo`} mono />
                     <Row label="Est. CTR" value={`${assumptions.ctr}%`} mono />
                     <Row label="Conversion Rate" value={`${assumptions.convRate}%`} mono />
@@ -224,7 +307,7 @@ export default function ThreatDetailPage() {
               <Bar label="Domain Deceptiveness" value={T.similarity.domain} color={sc(T.similarity.domain)} />
             </div>
 
-            {/* Detected On Keywords */}
+            {/* Detected On */}
             <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
               <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 12px", color: "#0F172A" }}>Detected On</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -234,16 +317,26 @@ export default function ThreatDetailPage() {
               </div>
             </div>
 
-            {/* Takedown Channels with progress bars */}
+            {/* Dynamic Takedown Channels */}
             <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
-              <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 12px", color: "#0F172A" }}>Takedown Channels</h3>
-              {T.takedowns.map((td, i) => (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h3 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: "#0F172A" }}>Takedown Channels</h3>
+                <span style={{ fontSize: 11, color: "#94A3B8" }}>{channels.length} applicable</span>
+              </div>
+              <p style={{ fontSize: 12, color: "#94A3B8", margin: "0 0 12px", lineHeight: 1.4 }}>Channels selected based on evidence type</p>
+              {channels.map((td, i) => (
                 <div key={i} style={{ padding: "10px 14px", borderRadius: 8, background: "#F8FAFB", border: "1px solid #F1F5F9", marginBottom: 6 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 13, fontWeight: 500, color: "#1E293B" }}>{td.channel}</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 5, background: "#F1F5F9", color: "#94A3B8" }}>Draft</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <span style={{ fontSize: 14 }}>{td.icon}</span>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: "#1E293B" }}>{td.channel}</div>
+                        <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 1 }}>{td.reason}</div>
+                      </div>
+                    </div>
+                    {statusBadge(td.status)}
                   </div>
-                  <TakedownProgress status="draft" />
+                  <TakedownProgressBar status={td.status} />
                 </div>
               ))}
             </div>

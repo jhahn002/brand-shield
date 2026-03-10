@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 
 // ─── Shared Revenue Logic (same as threats/page.js) ───────────────────────
@@ -11,7 +12,8 @@ const CTR_CURVES = {
 };
 function getCTR(threatType, position = 2) {
   const curve = threatType === "paid_ad" ? CTR_CURVES.paid : threatType === "shopping_listing" ? CTR_CURVES.shopping : CTR_CURVES.organic;
-  return curve[position] ?? curve[Object.keys(curve).at(-1)];
+  const keys = Object.keys(curve);
+  return curve[position] ?? curve[keys[keys.length - 1]];
 }
 function calcRevenue(t, a = DEFAULTS) {
   if (t.revenue_at_risk_monthly > 0) return t.revenue_at_risk_monthly;
@@ -86,7 +88,8 @@ function Bar({ label, value, color }) {
   );
 }
 
-export default function ThreatDetailPage({ params }) {
+export default function ThreatDetailPage() {
+  const params = useParams();
   const [threat, setThreat]       = useState(null);
   const [loading, setLoading]     = useState(true);
   const [tab, setTab]             = useState("evidence");
@@ -100,9 +103,10 @@ export default function ThreatDetailPage({ params }) {
   }, []);
 
   useEffect(() => {
-    if (!params?.id) { setThreat(MOCK_THREAT); setLoading(false); return; }
+    const id = params?.id;
+    if (!id) { setThreat(MOCK_THREAT); setLoading(false); return; }
     const api = process.env.NEXT_PUBLIC_API_URL || "https://brave-embrace-production-f71d.up.railway.app";
-    fetch(`${api}/api/v1/threats/${params.id}`)
+    fetch(`${api}/api/v1/threats/${id}`)
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(d => setThreat(d))
       .catch(() => setThreat(MOCK_THREAT))

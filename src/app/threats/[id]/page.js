@@ -13,20 +13,20 @@ const CTR_CURVES = {
 function getCTR(threatType, position = 2) {
   const curve = threatType === "paid_ad" ? CTR_CURVES.paid : threatType === "shopping_listing" ? CTR_CURVES.shopping : CTR_CURVES.organic;
   const keys = Object.keys(curve);
-  return curve[position] ?? curve[keys[keys.length - 1]];
+  return curve[position] !== undefined ? curve[position] : curve[keys[keys.length - 1]];
 }
 function calcRevenue(t, a = DEFAULTS) {
   if (t.revenue_at_risk_monthly > 0) return t.revenue_at_risk_monthly;
   const vol = t.keyword_volume || t.monthly_volume || t.search_volume || 0;
   if (!vol) return 0;
-  return Math.round(vol * getCTR(t.threat_type, t.ad_position || 2) * (a.conversionRate ?? DEFAULTS.conversionRate) * (a.aov ?? DEFAULTS.aov));
+  return Math.round(vol * getCTR(t.threat_type, t.ad_position || 2) * (a.conversionRate !== undefined ? a.conversionRate : DEFAULTS.conversionRate) * (a.aov !== undefined ? a.aov : DEFAULTS.aov));
 }
 function calcClicks(t) {
   const vol = t.keyword_volume || t.monthly_volume || t.search_volume || 0;
   return Math.round(vol * getCTR(t.threat_type, t.ad_position || 2));
 }
 function calcSales(t, a = DEFAULTS) {
-  return Math.round(calcClicks(t) * (a.conversionRate ?? DEFAULTS.conversionRate));
+  return Math.round(calcClicks(t) * (a.conversionRate !== undefined ? a.conversionRate : DEFAULTS.conversionRate));
 }
 function loadAssumptions() {
   try { const r = typeof window !== "undefined" && localStorage.getItem("brandshield_assumptions"); return r ? { ...DEFAULTS, ...JSON.parse(r) } : { ...DEFAULTS }; } catch { return { ...DEFAULTS }; }
@@ -103,7 +103,7 @@ export default function ThreatDetailPage() {
   }, []);
 
   useEffect(() => {
-    const id = params?.id;
+    const id = params && params.id;
     if (!id) { setThreat(MOCK_THREAT); setLoading(false); return; }
     const api = process.env.NEXT_PUBLIC_API_URL || "https://brave-embrace-production-f71d.up.railway.app";
     fetch(`${api}/api/v1/threats/${id}`)
@@ -111,7 +111,7 @@ export default function ThreatDetailPage() {
       .then(d => setThreat(d))
       .catch(() => setThreat(MOCK_THREAT))
       .finally(() => setLoading(false));
-  }, [params?.id]);
+  }, [params && params.id]);
 
   const setA = (key, val) => {
     const next = { ...assumptions, [key]: parseFloat(val) || DEFAULTS[key] };
@@ -143,7 +143,7 @@ export default function ThreatDetailPage() {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
             <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, fontFamily: "monospace", color: "#0F172A" }}>{T.domain}</h1>
-            <span style={{ fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: sColor(T.severity_score) === "#EF4444" ? "#FEF2F2" : "#FFFBEB", color: sColor(T.severity_score) }}>
+            <span style={{ fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: T.severity_score >= 70 ? "#FEF2F2" : T.severity_score >= 40 ? "#FFFBEB" : "#F0FDF4", color: sColor(T.severity_score) }}>
               {scLabel(T.severity_score)} · {T.severity_score}
             </span>
           </div>
@@ -314,7 +314,7 @@ export default function ThreatDetailPage() {
             )}
 
             {/* Detected On Keywords */}
-            {T.keywords?.length > 0 && (
+            {T.keywords && T.keywords.length > 0 && (
               <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
                 <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 12px", color: "#0F172A" }}>Detected On</h3>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -328,7 +328,7 @@ export default function ThreatDetailPage() {
             )}
 
             {/* Takedown Channels */}
-            {T.takedown_channels?.length > 0 && (
+            {T.takedown_channels && T.takedown_channels.length > 0 && (
               <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
                 <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 12px", color: "#0F172A" }}>Takedown Channels</h3>
                 {T.takedown_channels.map((td, i) => (

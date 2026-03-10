@@ -12,7 +12,7 @@ const CTR_BY_POSITION = {
 };
 
 const DEFAULT_AOV = 70;
-const DEFAULT_CONVERSION_RATE = 0.025;
+const DEFAULT_CONVERSION_RATE = 0.028; // matches detail page default
 
 function getDefaultCTR(threatType, position = 2) {
   if (threatType === "paid_ad") return CTR_BY_POSITION.paid[position] ?? 0.018;

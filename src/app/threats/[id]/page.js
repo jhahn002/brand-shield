@@ -1,6 +1,5 @@
 "use client";
 import { useState } from "react";
-import DashboardShell from "@/components/DashboardShell";
 import { THREAT_DETAIL as T } from "@/lib/mock-data";
 import { useMounted } from "@/hooks/useApi";
 import Link from "next/link";
@@ -39,13 +38,54 @@ const ScreenshotBox = ({ label, domain, isBad }) => (
   </div>
 );
 
+// Progress bar for takedown status: 0=draft, 1=submitted, 2=acknowledged, 3=resolved
+const TakedownProgress = ({ status }) => {
+  const step = status === "resolved" ? 3 : status === "acknowledged" ? 2 : status === "submitted" ? 1 : 0;
+  const pct = (step / 3) * 100;
+  const color = step === 3 ? "#16A34A" : step >= 1 ? "#2563EB" : "#E2E8F0";
+  return (
+    <div style={{ height: 4, borderRadius: 2, background: "#F1F5F9", overflow: "hidden", marginTop: 6 }}>
+      <div style={{ width: `${pct}%`, height: "100%", borderRadius: 2, background: color, transition: "width 0.5s ease" }} />
+    </div>
+  );
+};
+
+const DEFAULT_ASSUMPTIONS = {
+  volume: "12,400",
+  ctr: "3.5",
+  convRate: "2.8",
+  aov: "67.50",
+};
+
+function calcRevenue(a) {
+  const vol = parseFloat(a.volume.replace(/,/g, "")) || 0;
+  const ctr = parseFloat(a.ctr) / 100 || 0;
+  const conv = parseFloat(a.convRate) / 100 || 0;
+  const aov = parseFloat(a.aov) || 0;
+  return Math.round(vol * ctr * conv * aov);
+}
+
 export default function ThreatDetailPage() {
   const mounted = useMounted();
   const [tab, setTab] = useState("evidence");
+  const [editing, setEditing] = useState(false);
+  const [assumptions, setAssumptions] = useState(DEFAULT_ASSUMPTIONS);
+  const [draft, setDraft] = useState(DEFAULT_ASSUMPTIONS);
+  const [saved, setSaved] = useState(false);
+
   const sc = (v) => v >= 0.7 ? "#EF4444" : v >= 0.4 ? "#F59E0B" : "#22C55E";
+  const revenue = calcRevenue(assumptions);
+
+  const handleSave = (setDefault) => {
+    setAssumptions(draft);
+    setEditing(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    // In production: if setDefault, persist to brand settings via API
+  };
 
   return (
-    <DashboardShell>
+    <div>
       <Link href="/threats" style={{ fontSize: 13, color: "#2563EB", cursor: "pointer", marginBottom: 16, fontWeight: 500, display: "inline-block", textDecoration: "none" }}>← Back to Threats</Link>
 
       {/* Header */}
@@ -58,7 +98,7 @@ export default function ThreatDetailPage() {
           <div style={{ display: "flex", gap: 16, fontSize: 13, color: "#94A3B8" }}>
             <span>Type: <strong style={{ color: "#64748B" }}>{T.type}</strong></span>
             <span>First: <strong style={{ color: "#64748B" }}>{T.firstSeen}</strong></span>
-            <span>Revenue: <strong style={{ color: "#EF4444" }}>${T.revenue.toLocaleString()}/mo</strong></span>
+            <span>Revenue: <strong style={{ color: "#EF4444" }}>${revenue.toLocaleString()}/mo</strong></span>
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -120,16 +160,62 @@ export default function ThreatDetailPage() {
 
           {/* Right Column */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ background: "linear-gradient(135deg, #FEF2F2, #FFF7ED)", borderRadius: 16, padding: 24, border: "1px solid #FECACA", textAlign: "center" }}>
-              <div style={{ fontSize: 36, fontWeight: 700, color: "#DC2626", fontFamily: "var(--font-mono)", letterSpacing: "-0.03em" }}>${T.revenue.toLocaleString()}</div>
-              <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>estimated monthly revenue at risk</div>
-              <div style={{ marginTop: 14, fontSize: 12, color: "#94A3B8", textAlign: "left" }}>
-                <Row label="Keyword Volume" value="12,400/mo" mono />
-                <Row label="Est. CTR (#2)" value="3.5%" mono />
-                <Row label="Conversion Rate" value="2.8%" mono />
-                <Row label="AOV" value="$67.50" mono />
+
+            {/* Revenue at Risk Card */}
+            <div style={{ background: "linear-gradient(135deg, #FEF2F2, #FFF7ED)", borderRadius: 16, padding: 24, border: "1px solid #FECACA" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ fontSize: 36, fontWeight: 700, color: "#DC2626", fontFamily: "var(--font-mono)", letterSpacing: "-0.03em" }}>${revenue.toLocaleString()}</div>
+                  <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>estimated monthly revenue at risk</div>
+                </div>
+                {!editing && (
+                  <button onClick={() => { setDraft(assumptions); setEditing(true); }} style={{ padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, border: "1px solid #FECACA", cursor: "pointer", background: "white", color: "#DC2626", whiteSpace: "nowrap" }}>
+                    ✏️ Edit
+                  </button>
+                )}
+              </div>
+
+              <div style={{ marginTop: 14, fontSize: 12 }}>
+                {editing ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {[
+                      { label: "Keyword Volume", key: "volume", suffix: "/mo" },
+                      { label: "Est. CTR", key: "ctr", suffix: "%" },
+                      { label: "Conversion Rate", key: "convRate", suffix: "%" },
+                      { label: "AOV", key: "aov", prefix: "$" },
+                    ].map(({ label, key, suffix, prefix }) => (
+                      <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #FECACA" }}>
+                        <span style={{ color: "#92400E", fontSize: 12 }}>{label}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                          {prefix && <span style={{ fontSize: 12, color: "#64748B" }}>{prefix}</span>}
+                          <input
+                            value={draft[key]}
+                            onChange={e => setDraft(p => ({ ...p, [key]: e.target.value }))}
+                            style={{ width: 70, padding: "3px 6px", borderRadius: 5, border: "1px solid #FECACA", fontSize: 12, fontFamily: "var(--font-mono)", textAlign: "right", outline: "none", background: "white" }}
+                          />
+                          {suffix && <span style={{ fontSize: 12, color: "#64748B" }}>{suffix}</span>}
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                      <button onClick={() => handleSave(false)} style={{ flex: 1, padding: "7px 0", borderRadius: 6, fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", background: "#DC2626", color: "white" }}>Recalculate</button>
+                      <button onClick={() => handleSave(true)} style={{ flex: 1.4, padding: "7px 0", borderRadius: 6, fontSize: 11, fontWeight: 600, border: "1px solid #FECACA", cursor: "pointer", background: "white", color: "#92400E" }}>Set as Default</button>
+                    </div>
+                    <button onClick={() => setEditing(false)} style={{ padding: "5px 0", borderRadius: 6, fontSize: 11, border: "none", cursor: "pointer", background: "transparent", color: "#94A3B8" }}>Cancel</button>
+                  </div>
+                ) : (
+                  <div>
+                    {saved && <div style={{ fontSize: 11, color: "#16A34A", marginBottom: 8, fontWeight: 500 }}>✓ Updated</div>}
+                    <Row label="Keyword Volume" value={`${assumptions.volume}/mo`} mono />
+                    <Row label="Est. CTR" value={`${assumptions.ctr}%`} mono />
+                    <Row label="Conversion Rate" value={`${assumptions.convRate}%`} mono />
+                    <Row label="AOV" value={`$${assumptions.aov}`} mono />
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Similarity Scores */}
             <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
               <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 4px", color: "#0F172A" }}>Similarity Scores</h3>
               <p style={{ fontSize: 12, color: "#94A3B8", margin: "0 0 16px" }}>Composite: <strong style={{ color: "#DC2626" }}>{T.severity}/100</strong></p>
@@ -137,6 +223,8 @@ export default function ThreatDetailPage() {
               <Bar label="Visual Similarity" value={T.similarity.visual} color={sc(T.similarity.visual)} />
               <Bar label="Domain Deceptiveness" value={T.similarity.domain} color={sc(T.similarity.domain)} />
             </div>
+
+            {/* Detected On Keywords */}
             <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
               <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 12px", color: "#0F172A" }}>Detected On</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -145,15 +233,21 @@ export default function ThreatDetailPage() {
                 ))}
               </div>
             </div>
+
+            {/* Takedown Channels with progress bars */}
             <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
               <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 12px", color: "#0F172A" }}>Takedown Channels</h3>
               {T.takedowns.map((td, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderRadius: 8, background: "#F8FAFB", border: "1px solid #F1F5F9", marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 500 }}>{td.channel}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 5, background: "#F1F5F9", color: "#94A3B8" }}>Draft</span>
+                <div key={i} style={{ padding: "10px 14px", borderRadius: 8, background: "#F8FAFB", border: "1px solid #F1F5F9", marginBottom: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 13, fontWeight: 500, color: "#1E293B" }}>{td.channel}</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 5, background: "#F1F5F9", color: "#94A3B8" }}>Draft</span>
+                  </div>
+                  <TakedownProgress status="draft" />
                 </div>
               ))}
             </div>
+
           </div>
         </div>
       )}
@@ -168,6 +262,6 @@ export default function ThreatDetailPage() {
           <p style={{ fontSize: 15 }}>Detection history timeline — coming in Phase 2</p>
         </div>
       )}
-    </DashboardShell>
+    </div>
   );
 }

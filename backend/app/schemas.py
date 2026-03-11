@@ -91,6 +91,8 @@ class ThreatResponse(BaseModel):
     revenue_at_risk_monthly: Decimal
     first_seen_at: datetime
     last_seen_at: datetime
+    keyword_volume: Optional[int] = None
+    ad_position: Optional[int] = None
 
     model_config = {"from_attributes": True}
 

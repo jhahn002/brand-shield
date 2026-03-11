@@ -1,413 +1,464 @@
 "use client";
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 
-// ─── Shared Revenue Logic (same as threats/page.js) ───────────────────────
-const DEFAULTS = { aov: 70, conversionRate: 0.028 };
-const CTR_CURVES = {
-  paid:     { 1: 0.070, 2: 0.035, 3: 0.025, 4: 0.018, 5: 0.012, 6: 0.008 },
-  shopping: { 1: 0.050, 2: 0.038, 3: 0.028, 4: 0.020, 5: 0.014 },
-  organic:  { 1: 0.280, 2: 0.150, 3: 0.110, 4: 0.080, 5: 0.060, 6: 0.050, 7: 0.040, 8: 0.030 },
-};
-function getCTR(threatType, position = 2) {
-  const curve = threatType === "paid_ad" ? CTR_CURVES.paid : threatType === "shopping_listing" ? CTR_CURVES.shopping : CTR_CURVES.organic;
-  const keys = Object.keys(curve);
-  return curve[position] !== undefined ? curve[position] : curve[keys[keys.length - 1]];
-}
-function calcRevenue(t, a = DEFAULTS) {
-  if (parseFloat(t.revenue_at_risk_monthly) > 0) return Math.round(parseFloat(t.revenue_at_risk_monthly));
-  const vol = parseInt(t.keyword_volume || t.monthly_volume || t.search_volume || t.volume || 0, 10);
-  if (!vol) return 0;
-  const pos = parseInt(t.ad_position || t.position || t.result_position || 2, 10);
-  const convRate = parseFloat(a.conversionRate) || DEFAULTS.conversionRate;
-  const aov = parseFloat(a.aov) || DEFAULTS.aov;
-  return Math.round(vol * getCTR(t.threat_type, pos) * convRate * aov);
-}
-function calcClicks(t) {
-  const vol = parseInt(t.keyword_volume || t.monthly_volume || t.search_volume || t.volume || 0, 10);
-  const pos = parseInt(t.ad_position || t.position || t.result_position || 2, 10);
-  return Math.round(vol * getCTR(t.threat_type, pos));
-}
-function calcSales(t, a = DEFAULTS) {
-  return Math.round(calcClicks(t) * (parseFloat(a.conversionRate) || DEFAULTS.conversionRate));
-}
-function loadAssumptions() {
-  try {
-    const r = typeof window !== "undefined" && localStorage.getItem("brandshield_assumptions");
-    if (!r) return { aov: DEFAULTS.aov, conversionRate: DEFAULTS.conversionRate };
-    const parsed = JSON.parse(r);
-    return {
-      aov: parseFloat(parsed.aov) || DEFAULTS.aov,
-      conversionRate: parseFloat(parsed.conversionRate) || DEFAULTS.conversionRate,
-    };
-  } catch { return { aov: DEFAULTS.aov, conversionRate: DEFAULTS.conversionRate }; }
-}
-function saveAssumptions(a) { try { localStorage.setItem("brandshield_assumptions", JSON.stringify(a)); } catch {} }
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://brave-embrace-production-f71d.up.railway.app";
 
-// ─── Mock threat ────────────────────────────────────────────────────────────
-const MOCK_THREAT = {
-  id: "t-01",
-  domain: "beam-supplements-official.com",
-  threat_type: "paid_ad",
-  severity_score: 94,
-  status: "detected",
-  keyword_volume: 12400,
-  ad_position: 2,
-  revenue_at_risk_monthly: 0,
-  first_seen_at: "2026-02-12T09:00:00Z",
-  last_seen_at: "2026-03-10T14:00:00Z",
-  similarity: { text: 0.78, visual: 0.64, domain: 0.85 },
-  keywords: ["beam supplements", "beam official", "buy beam", "beam coupon"],
-  ad_copy: {
-    title: "Beam Supplements™ – Official Store | 60% Off Today",
-    description: "Shop the official Beam Supplements collection. Premium health & wellness products. Free shipping on orders over $50.",
-    display_url: "beam-supplements-official.com/shop",
-    position: 2,
-    keyword: "beam supplements",
-  },
-  whois: {
-    registrar: "Namecheap, Inc.",
-    registered: "2026-01-15",
-    age_days: 54,
-    ip: "104.21.38.72",
-    hosting: "Cloudflare, Inc.",
-    country: "US",
-    ssl_issuer: "Let's Encrypt",
-    privacy_protected: true,
-  },
-  takedown_channels: [
-    { channel: "Google Ads Trademark Complaint", reason: "Paid ad using brand trademark", applicable: true },
-    { channel: "Domain Registrar Abuse Report", reason: "Domain designed to impersonate brand", applicable: true },
-    { channel: "Direct DMCA to Site Operator", reason: "Copied product content detected", applicable: true },
-  ],
-};
+// ── Helpers ──────────────────────────────────────────────────────
+function timeAgo(ts) {
+  if (!ts) return "—";
+  const diff = Date.now() - new Date(ts).getTime();
+  const d = Math.floor(diff / 86400000);
+  if (d > 30) return new Date(ts).toLocaleDateString();
+  if (d > 0) return `${d}d ago`;
+  const h = Math.floor(diff / 3600000);
+  if (h > 0) return `${h}h ago`;
+  return "Just now";
+}
 
-function sColor(s) { return s >= 70 ? "#EF4444" : s >= 40 ? "#F59E0B" : "#22C55E"; }
-function scLabel(s) { return s >= 70 ? "Critical" : s >= 40 ? "Moderate" : "Low"; }
+function fmtDate(str) {
+  if (!str) return "—";
+  try { return new Date(str).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }); }
+  catch { return str; }
+}
 
-function Bar({ label, value, color }) {
+function ScoreBar({ label, value, max = 100, color = "#ef4444" }) {
+  const pct = Math.min(100, Math.round((value / max) * 100));
+  const bgColor = pct >= 70 ? "#ef4444" : pct >= 40 ? "#f59e0b" : "#22c55e";
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ fontSize: 13, color: "#475569" }}>{label}</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color }}>{Math.round(value * 100)}%</span>
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+        <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 500 }}>{label}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: bgColor }}>{pct}%</span>
       </div>
-      <div style={{ height: 6, background: "#F1F5F9", borderRadius: 3, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${value * 100}%`, background: color, borderRadius: 3, transition: "width 0.8s ease" }} />
+      <div style={{ height: 6, background: "#1e293b", borderRadius: 99, overflow: "hidden" }}>
+        <div style={{
+          height: "100%", width: `${pct}%`, borderRadius: 99,
+          background: `linear-gradient(90deg, ${bgColor}88, ${bgColor})`,
+          transition: "width 0.8s cubic-bezier(.4,0,.2,1)",
+        }} />
       </div>
     </div>
   );
 }
 
-export default function ThreatDetailPage() {
-  const params = useParams();
-  const [threat, setThreat]       = useState(null);
-  const [loading, setLoading]     = useState(true);
-  const [tab, setTab]             = useState("evidence");
-  const [assumptions, setAssump]  = useState(DEFAULTS);
-  const [editingA, setEditingA]   = useState(false);
-  const [mounted, setMounted]     = useState(false);
+function InfoRow({ label, value, mono, highlight, tag }) {
+  return (
+    <div style={{
+      display: "flex", justifyContent: "space-between", alignItems: "flex-start",
+      padding: "10px 0", borderBottom: "1px solid #1e293b",
+    }}>
+      <span style={{ fontSize: 12, color: "#64748b", fontWeight: 500, minWidth: 140 }}>{label}</span>
+      <span style={{
+        fontSize: 12, color: highlight ? "#f87171" : "#e2e8f0",
+        fontFamily: mono ? "'JetBrains Mono', monospace" : undefined,
+        textAlign: "right", maxWidth: 300, wordBreak: "break-all",
+      }}>
+        {tag ? (
+          <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>{value}</span>
+        ) : value || "—"}
+      </span>
+    </div>
+  );
+}
 
-  useEffect(() => {
-    setMounted(true);
-    setAssump(loadAssumptions());
-  }, []);
+function RiskFlag({ flag }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8,
+      padding: "8px 12px", background: "rgba(239,68,68,0.08)",
+      border: "1px solid rgba(239,68,68,0.2)", borderRadius: 8, marginBottom: 8,
+    }}>
+      <span style={{ color: "#ef4444", fontSize: 14 }}>⚑</span>
+      <span style={{ fontSize: 12, color: "#fca5a5" }}>{flag}</span>
+    </div>
+  );
+}
 
-  useEffect(() => {
-    const id = params && params.id;
-    if (!id) { setThreat(MOCK_THREAT); setLoading(false); return; }
-    const token = typeof window !== "undefined" ? (localStorage.getItem("bs_token") || "") : "";
-    const api = process.env.NEXT_PUBLIC_API_URL || "https://brave-embrace-production-f71d.up.railway.app";
-    const headers = { "Content-Type": "application/json", ...(token ? { "Authorization": `Bearer ${token}` } : {}) };
-    fetch(`${api}/api/v1/threats/${id}`, { headers })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(d => setThreat(d))
-      .catch(() => setThreat(MOCK_THREAT))
-      .finally(() => setLoading(false));
-  }, [params && params.id]);
+function Tag({ children, color = "#3b82f6" }) {
+  return (
+    <span style={{
+      display: "inline-block", padding: "3px 10px", borderRadius: 999,
+      fontSize: 11, fontWeight: 600, letterSpacing: "0.02em",
+      background: `${color}20`, color, border: `1px solid ${color}40`,
+    }}>{children}</span>
+  );
+}
 
-  const setA = (key, val) => {
-    const next = { ...assumptions, [key]: parseFloat(val) || DEFAULTS[key] };
-    setAssump(next);
-    saveAssumptions(next);
-  };
+function SeverityBadge({ score }) {
+  const s = Number(score) || 0;
+  if (s >= 70) return <Tag color="#ef4444">Critical</Tag>;
+  if (s >= 40) return <Tag color="#f59e0b">Moderate</Tag>;
+  return <Tag color="#22c55e">Low</Tag>;
+}
 
-  if (loading) return <div style={{ padding: 32, color: "#94A3B8" }}>Loading threat details…</div>;
-  if (!threat)  return <div style={{ padding: 32, color: "#EF4444" }}>Threat not found.</div>;
+// ── Tab Components ───────────────────────────────────────────────
+function EvidenceTab({ evidence, threat }) {
+  const whois = evidence.find(e => e.evidence_type === "whois")?.data || {};
+  const contentSim = evidence.find(e => e.evidence_type === "content_similarity")?.data || {};
+  const visualSim = evidence.find(e => e.evidence_type === "visual_similarity")?.data || {};
+  const adCopy = evidence.find(e => e.evidence_type === "ad_copy")?.data || null;
+  const hostingInfo = evidence.find(e => e.evidence_type === "hosting_info")?.data || {};
 
-  // Normalize real API evidence array into the shape the UI expects
-  function normalizeFromEvidence(threat) {
-    const ev = threat.evidence || [];
-    const byType = {};
-    ev.forEach(e => { byType[e.evidence_type] = e.data || {}; });
-
-    // Extract keyword_volume and ad_position from evidence data
-    const adCopyData  = byType["ad_copy"] || {};
-    const whoisData   = byType["whois"] || {};
-    const contentSim  = byType["content_similarity"] || {};
-    const visualSim   = byType["visual_similarity"] || {};
-    const techData    = byType["tech_stack"] || {};
-
-    const keyword_volume = threat.keyword_volume || adCopyData.keyword_volume || 0;
-    const ad_position    = threat.ad_position    || adCopyData.position        || adCopyData.ad_position || 3;
-
-    const ad_copy = adCopyData.title ? adCopyData : null;
-    const whois   = whoisData.registrar ? {
-      registrar:         whoisData.registrar || "Unknown",
-      registered:        whoisData.created_date || whoisData.registered || "Unknown",
-      age_days:          whoisData.age_days || (whoisData.created_date ? Math.floor((Date.now() - new Date(whoisData.created_date)) / 86400000) : null),
-      ip:                whoisData.ip || techData.ip || null,
-      hosting:           whoisData.hosting || techData.hosting || null,
-      country:           whoisData.registrant_country || whoisData.country || null,
-      ssl_issuer:        whoisData.ssl_issuer || null,
-      privacy_protected: whoisData.registrant_org ? whoisData.registrant_org.toLowerCase().includes("privacy") : true,
-    } : null;
-
-    const similarity = (contentSim.score || visualSim.score) ? {
-      text:   contentSim.score   || 0,
-      visual: visualSim.score    || 0,
-      domain: threat.domain_deceptiveness || 0,
-    } : threat.similarity || null;
-
-    return { ...threat, keyword_volume, ad_position, ad_copy, whois, similarity };
-  }
-
-  const T = normalizeFromEvidence(threat);
-  const revenue = calcRevenue(T, assumptions);
-  const clicks  = calcClicks(T);
-  const sales   = calcSales(T, assumptions);
-  const ctr     = getCTR(T.threat_type, T.ad_position || 2);
-  const vol     = T.keyword_volume || T.monthly_volume || T.search_volume || 0;
-  const TYPE_LABEL = { paid_ad: "Paid Ad", organic_clone: "Clone", organic_misleading: "Misleading", shopping_listing: "Shopping" };
+  const textScore = Math.round((contentSim.text_similarity_score || 0) * 100);
+  const visualScore = Math.round((contentSim.visual_similarity_score || visualSim.score || 0) * 100);
+  const domainScore = whois.risk_flags?.length ? Math.min(100, whois.risk_flags.length * 25 + 30) : 40;
 
   return (
-    <div style={{ padding: "28px 32px", maxWidth: 1100 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 20 }}>
+      {/* Left column */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
-      {/* Back */}
-      <Link href="/threats" style={{ fontSize: 13, color: "#2563EB", textDecoration: "none", fontWeight: 500, display: "inline-block", marginBottom: 16 }}>
-        ← Back to Threats
-      </Link>
+        {/* Similarity Scores */}
+        <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 16, padding: 24 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 20px" }}>
+            Similarity Analysis
+          </h3>
+          <ScoreBar label="Text / Content Similarity" value={textScore} />
+          <ScoreBar label="Visual / Layout Similarity" value={visualScore} />
+          <ScoreBar label="Domain Deceptiveness" value={domainScore} />
+          {contentSim.color_palette_match && (
+            <ScoreBar label="Color Palette Match" value={Math.round(contentSim.color_palette_match * 100)} />
+          )}
 
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20, opacity: mounted ? 1 : 0, transition: "opacity 0.3s" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
-            <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, fontFamily: "monospace", color: "#0F172A" }}>{T.domain}</h1>
-            <span style={{ fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: T.severity_score >= 70 ? "#FEF2F2" : T.severity_score >= 40 ? "#FFFBEB" : "#F0FDF4", color: sColor(T.severity_score) }}>
-              {scLabel(T.severity_score)} · {T.severity_score}
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 16, fontSize: 13, color: "#94A3B8", flexWrap: "wrap" }}>
-            <span>Type: <strong style={{ color: "#64748B" }}>{TYPE_LABEL[T.threat_type] || T.threat_type}</strong></span>
-            <span>First: <strong style={{ color: "#64748B" }}>{new Date(T.first_seen_at).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" })}</strong></span>
-            <span>Revenue: <strong style={{ color: "#EF4444" }}>${revenue.toLocaleString()}/mo</strong></span>
+          {contentSim.matched_terms?.length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ fontSize: 12, color: "#64748b", fontWeight: 600, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                Matched Brand Terms
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {contentSim.matched_terms.map((term, i) => (
+                  <span key={i} style={{
+                    fontSize: 11, padding: "3px 10px", background: "rgba(239,68,68,0.1)",
+                    color: "#fca5a5", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 999,
+                  }}>{term}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+            {contentSim.copied_sections_detected && (
+              <div style={{ flex: 1, padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10, textAlign: "center" }}>
+                <div style={{ fontSize: 18, marginBottom: 4 }}>⚠️</div>
+                <div style={{ fontSize: 11, color: "#fca5a5", fontWeight: 600 }}>Copied Content Detected</div>
+              </div>
+            )}
+            {contentSim.logo_detected_on_page && (
+              <div style={{ flex: 1, padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10, textAlign: "center" }}>
+                <div style={{ fontSize: 18, marginBottom: 4 }}>🔍</div>
+                <div style={{ fontSize: 11, color: "#fca5a5", fontWeight: 600 }}>Brand Logo Detected</div>
+              </div>
+            )}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-          <button style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer", background: "#DC2626", color: "white" }}>Initiate Takedown</button>
-          <button style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 500, border: "1px solid #E2E8F0", cursor: "pointer", background: "white", color: "#64748B" }}>Dismiss</button>
-          <button style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 500, border: "1px solid #E2E8F0", cursor: "pointer", background: "white", color: "#64748B" }}>Whitelist</button>
+
+        {/* Ad Copy */}
+        {adCopy && (
+          <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 16, padding: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", margin: 0 }}>
+                Captured Ad Copy
+              </h3>
+              <Tag color="#f59e0b">Position #{adCopy.ad_position || "?"}</Tag>
+            </div>
+
+            {/* Realistic ad preview */}
+            <div style={{ background: "#0a0f1a", border: "1px solid #1e293b", borderRadius: 12, padding: 18 }}>
+              <div style={{ fontSize: 11, color: "#22c55e", fontWeight: 600, marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ background: "#22c55e22", padding: "1px 6px", borderRadius: 3, border: "1px solid #22c55e44" }}>Sponsored</span>
+                <span style={{ color: "#475569" }}>{adCopy.display_url || threat?.domain}</span>
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 600, color: "#60a5fa", marginBottom: 8, lineHeight: 1.4 }}>
+                {[adCopy.headline_1, adCopy.headline_2, adCopy.headline_3].filter(Boolean).join(" | ")}
+              </div>
+              <div style={{ fontSize: 13, color: "#94a3b8", lineHeight: 1.6 }}>
+                {adCopy.description_1}
+              </div>
+              {adCopy.description_2 && (
+                <div style={{ fontSize: 13, color: "#94a3b8", lineHeight: 1.6, marginTop: 4 }}>
+                  {adCopy.description_2}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Tech Stack */}
+        {hostingInfo.tech_stack?.length > 0 && (
+          <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 16, padding: 24 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 16px" }}>
+              Tech Stack Fingerprint
+            </h3>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {hostingInfo.tech_stack.map((t, i) => (
+                <span key={i} style={{
+                  fontSize: 12, padding: "5px 14px", background: "#1e293b",
+                  color: "#94a3b8", borderRadius: 8, border: "1px solid #334155",
+                }}>{t}</span>
+              ))}
+            </div>
+            {hostingInfo.payment_processor && (
+              <div style={{ marginTop: 14, padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10 }}>
+                <span style={{ fontSize: 12, color: "#fca5a5" }}>
+                  💳 Payment processor detected: <strong>{hostingInfo.payment_processor}</strong> — this site is actively transacting
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Right column — WHOIS */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 16, padding: 24 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 16px" }}>
+            WHOIS & Infrastructure
+          </h3>
+
+          {whois.risk_flags?.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              {whois.risk_flags.map((flag, i) => <RiskFlag key={i} flag={flag} />)}
+            </div>
+          )}
+
+          <InfoRow label="Registrar" value={whois.registrar} />
+          <InfoRow label="Registered" value={fmtDate(whois.created_date)} />
+          <InfoRow label="Domain Age" value={whois.domain_age_days ? `${whois.domain_age_days} days` : "—"} highlight={whois.domain_age_days < 180} />
+          <InfoRow label="Expires" value={fmtDate(whois.expires_date)} />
+          <InfoRow label="Registrant" value={whois.registrant_name} />
+          <InfoRow label="Registrant Email" value={whois.registrant_email} mono />
+          <InfoRow label="Privacy Protected" value={whois.privacy_protected ? "Yes" : "No"} highlight={whois.privacy_protected} />
+
+          <div style={{ height: 1, background: "#1e293b", margin: "16px 0" }} />
+
+          <InfoRow label="IP Address" value={whois.ip_address} mono highlight />
+          <InfoRow label="Hosting Provider" value={whois.hosting_provider} />
+          <InfoRow label="Hosting Country" value={whois.hosting_country} />
+          <InfoRow label="ASN" value={whois.hosting_asn} mono />
+          <InfoRow label="SSL Issuer" value={whois.ssl_issuer} />
+
+          {whois.name_servers?.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em" }}>Name Servers</div>
+              {whois.name_servers.map((ns, i) => (
+                <div key={i} style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace", padding: "3px 0" }}>{ns}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OverviewTab({ threat }) {
+  const s = Number(threat.severity_score) || 0;
+  const sevColor = s >= 70 ? "#ef4444" : s >= 40 ? "#f59e0b" : "#22c55e";
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 16, padding: 24 }}>
+        <h3 style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 16px" }}>Threat Details</h3>
+        <InfoRow label="Domain" value={threat.domain} mono />
+        <InfoRow label="Threat Type" value={threat.threat_type?.replace(/_/g, " ")} />
+        <InfoRow label="Status" value={threat.status} />
+        <InfoRow label="Severity Score" value={`${Math.round(s)}/100`} highlight={s >= 70} />
+        <InfoRow label="First Detected" value={fmtDate(threat.first_seen_at)} />
+        <InfoRow label="Last Seen" value={timeAgo(threat.last_seen_at)} />
+      </div>
+      <div style={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 16, padding: 24 }}>
+        <h3 style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 16px" }}>Revenue at Risk</h3>
+        <div style={{ textAlign: "center", padding: "20px 0" }}>
+          <div style={{ fontSize: 42, fontWeight: 800, color: sevColor, letterSpacing: "-0.02em" }}>
+            ${Number(threat.revenue_at_risk_monthly || 0).toLocaleString()}
+          </div>
+          <div style={{ fontSize: 13, color: "#64748b", marginTop: 6 }}>estimated per month</div>
+        </div>
+        {threat.notes && (
+          <div style={{ marginTop: 16, padding: "12px 14px", background: "#1e293b", borderRadius: 10, fontSize: 13, color: "#94a3b8", lineHeight: 1.6 }}>
+            {threat.notes}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ────────────────────────────────────────────────────
+export default function ThreatDetailPage() {
+  const params = useParams();
+  const router = useRouter();
+  const [threat, setThreat] = useState(null);
+  const [evidence, setEvidence] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState("evidence");
+  const [actionLoading, setActionLoading] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  useEffect(() => {
+    if (!params?.id) return;
+    setLoading(true);
+
+    const token = localStorage.getItem("brandshield_token");
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+    Promise.all([
+      fetch(`${API_BASE}/api/v1/threats/${params.id}`, { headers }),
+      fetch(`${API_BASE}/api/v1/threats/${params.id}/evidence`, { headers }),
+    ])
+      .then(async ([tr, er]) => {
+        const tData = tr.ok ? await tr.json() : null;
+        const eData = er.ok ? await er.json() : [];
+        setThreat(tData);
+        setEvidence(Array.isArray(eData) ? eData : eData.evidence || []);
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [params?.id]);
+
+  function showToast(msg, type = "success") {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  }
+
+  async function handleAction(action) {
+    setActionLoading(true);
+    const token = localStorage.getItem("brandshield_token");
+    const headers = { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/threats/${params.id}/${action}`, { method: "POST", headers, body: JSON.stringify({}) });
+      if (res.ok) {
+        showToast(action === "dismiss" ? "Threat dismissed" : "Takedown initiated");
+        const updated = await fetch(`${API_BASE}/api/v1/threats/${params.id}`, { headers }).then(r => r.json());
+        setThreat(updated);
+      } else {
+        showToast("Action failed — check console", "error");
+      }
+    } catch (e) {
+      showToast(e.message, "error");
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  const s = Number(threat?.severity_score) || 0;
+  const sevColor = s >= 70 ? "#ef4444" : s >= 40 ? "#f59e0b" : "#22c55e";
+  const tabs = [
+    { id: "evidence", label: `Evidence (${evidence.length})` },
+    { id: "overview", label: "Overview" },
+  ];
+
+  if (loading) return (
+    <div style={{ minHeight: "60vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ width: 40, height: 40, border: "3px solid #1e293b", borderTopColor: "#3b82f6", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 16px" }} />
+        <div style={{ color: "#475569", fontSize: 14 }}>Loading threat data...</div>
+      </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+
+  if (error || !threat) return (
+    <div style={{ padding: 40, textAlign: "center" }}>
+      <div style={{ fontSize: 14, color: "#ef4444", marginBottom: 16 }}>{error || "Threat not found"}</div>
+      <Link href="/threats" style={{ color: "#3b82f6", fontSize: 14 }}>← Back to Threats</Link>
+    </div>
+  );
+
+  return (
+    <div style={{ padding: "24px 32px", maxWidth: 1200, margin: "0 auto" }}>
+      {/* Toast */}
+      {toast && (
+        <div style={{
+          position: "fixed", top: 24, right: 24, zIndex: 9999,
+          padding: "12px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+          background: toast.type === "error" ? "#7f1d1d" : "#14532d",
+          color: toast.type === "error" ? "#fca5a5" : "#86efac",
+          border: `1px solid ${toast.type === "error" ? "#ef444440" : "#22c55e40"}`,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+        }}>{toast.msg}</div>
+      )}
+
+      {/* Header */}
+      <div style={{ marginBottom: 28 }}>
+        <Link href="/threats" style={{ color: "#475569", fontSize: 13, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
+          ← Back to Threat Queue
+        </Link>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+              <h1 style={{ fontSize: 24, fontWeight: 800, color: "#f1f5f9", margin: 0, fontFamily: "monospace" }}>
+                {threat.domain}
+              </h1>
+              <SeverityBadge score={s} />
+              <Tag color="#64748b">{threat.threat_type?.replace(/_/g, " ")}</Tag>
+            </div>
+            <div style={{ fontSize: 13, color: "#64748b" }}>
+              First detected {timeAgo(threat.first_seen_at)} · Last seen {timeAgo(threat.last_seen_at)}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={() => handleAction("dismiss")}
+              disabled={actionLoading || threat.status === "dismissed"}
+              style={{
+                padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                background: "transparent", color: "#64748b", border: "1px solid #334155",
+                opacity: threat.status === "dismissed" ? 0.5 : 1,
+              }}
+            >Dismiss</button>
+            <button
+              onClick={() => handleAction("takedown")}
+              disabled={actionLoading || threat.status === "takedown_submitted"}
+              style={{
+                padding: "10px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                background: "linear-gradient(135deg, #dc2626, #b91c1c)",
+                color: "white", border: "none",
+                opacity: threat.status === "takedown_submitted" ? 0.5 : 1,
+                boxShadow: "0 4px 12px rgba(220,38,38,0.3)",
+              }}
+            >{actionLoading ? "…" : "Initiate Takedown"}</button>
+          </div>
+        </div>
+
+        {/* Severity bar */}
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ flex: 1, height: 6, background: "#1e293b", borderRadius: 99, overflow: "hidden" }}>
+            <div style={{
+              height: "100%", width: `${s}%`, borderRadius: 99,
+              background: `linear-gradient(90deg, ${sevColor}66, ${sevColor})`,
+            }} />
+          </div>
+          <span style={{ fontSize: 13, fontWeight: 700, color: sevColor, minWidth: 60 }}>
+            {Math.round(s)}/100
+          </span>
+          <span style={{ fontSize: 12, color: "#64748b" }}>severity</span>
         </div>
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: "1px solid #F1F5F9", marginBottom: 24 }}>
-        {[["evidence","Evidence"],["takedowns","Takedowns"],["history","History"]].map(([k,l]) => (
-          <button key={k} onClick={() => setTab(k)} style={{ padding: "10px 20px", fontSize: 14, fontWeight: 500, border: "none", cursor: "pointer", background: "transparent", color: tab === k ? "#2563EB" : "#94A3B8", borderBottom: `2px solid ${tab === k ? "#2563EB" : "transparent"}`, marginBottom: -1 }}>
-            {l}
-          </button>
+      <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "1px solid #1e293b", paddingBottom: 0 }}>
+        {tabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              padding: "10px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              background: "transparent", border: "none", borderBottom: activeTab === tab.id ? "2px solid #3b82f6" : "2px solid transparent",
+              color: activeTab === tab.id ? "#60a5fa" : "#64748b",
+              marginBottom: -1, transition: "color 0.15s",
+            }}
+          >{tab.label}</button>
         ))}
       </div>
 
-      {tab === "evidence" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 20, alignItems: "start" }}>
-
-          {/* Left column */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-
-            {/* Visual Comparison */}
-            <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
-              <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 16px", color: "#0F172A" }}>Visual Comparison</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                {[
-                  { label: "YOUR SITE — BEAMSUPPLEMENTS.COM", domain: "beamsupplements.com", color: "#16A34A", bg: "#F0FDF4", border: "#86EFAC" },
-                  { label: "BAD ACTOR", domain: T.domain, color: "#DC2626", bg: "#FEF2F2", border: "#FECACA" },
-                ].map(s => (
-                  <div key={s.label} style={{ border: `1.5px solid ${s.border}`, borderRadius: 12, padding: 12, background: s.bg }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: s.color, marginBottom: 8, letterSpacing: "0.05em" }}>{s.label}</div>
-                    <div style={{ background: "white", borderRadius: 8, padding: 10, minHeight: 160 }}>
-                      {[80,60,90,40,70].map((w,i) => (
-                        <div key={i} style={{ height: i===2?40:10, width:`${w}%`, background: s.color === "#DC2626" ? "#FECACA" : "#BBF7D0", borderRadius: 4, marginBottom: 8 }} />
-                      ))}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#94A3B8", textAlign: "center", marginTop: 8, fontFamily: "monospace" }}>{s.domain}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Captured Ad */}
-            {T.ad_copy && (
-              <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
-                <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 16px", color: "#0F172A" }}>Captured Ad</h3>
-                <div style={{ background: "#F8FAFC", borderRadius: 10, padding: 16, border: "1px solid #F1F5F9" }}>
-                  <div style={{ fontSize: 11, color: "#16A34A", marginBottom: 4 }}>Sponsored · {T.ad_copy.display_url}</div>
-                  <div style={{ fontSize: 16, color: "#1558D6", fontWeight: 500, marginBottom: 6 }}>{T.ad_copy.title}</div>
-                  <div style={{ fontSize: 13, color: "#374151", lineHeight: 1.5 }}>{T.ad_copy.description}</div>
-                  <div style={{ marginTop: 8, fontSize: 12, color: "#94A3B8" }}>
-                    Position: <strong style={{ color: "#DC2626" }}>#{T.ad_copy.position}</strong> &nbsp;·&nbsp; Keyword: <strong style={{ color: "#475569" }}>"{T.ad_copy.keyword}"</strong>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* WHOIS */}
-            {T.whois && (
-              <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
-                <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 16px", color: "#0F172A" }}>Domain Intelligence</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  {[
-                    ["Registrar",    T.whois.registrar],
-                    ["Registered",   T.whois.registered],
-                    ["Domain Age",   `${T.whois.age_days} days old`],
-                    ["IP Address",   T.whois.ip, true],
-                    ["Hosting",      T.whois.hosting],
-                    ["Country",      T.whois.country],
-                    ["SSL Issuer",   T.whois.ssl_issuer],
-                    ["Privacy",      T.whois.privacy_protected ? "Protected" : "Public"],
-                  ].map(([label, val, highlight]) => (
-                    <div key={label} style={{ padding: "8px 12px", background: "#F8FAFC", borderRadius: 8 }}>
-                      <div style={{ fontSize: 11, color: "#94A3B8", marginBottom: 2 }}>{label}</div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: highlight ? "#DC2626" : "#0F172A", fontFamily: highlight ? "monospace" : "inherit" }}>{val}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Right column */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-
-            {/* Revenue Card */}
-            <div style={{ background: "#FEF2F2", borderRadius: 16, padding: 24, border: "1px solid #FECACA" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                <div style={{ fontSize: 36, fontWeight: 700, color: "#DC2626", fontVariantNumeric: "tabular-nums" }}>
-                  ${revenue.toLocaleString()}
-                </div>
-                <button onClick={() => setEditingA(v => !v)} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "white", color: "#DC2626", cursor: "pointer", fontWeight: 500 }}>
-                  ✏️ Edit
-                </button>
-              </div>
-              <div style={{ fontSize: 13, color: "#991B1B", marginBottom: 16 }}>estimated monthly revenue at risk</div>
-
-              {editingA && (
-                <div style={{ background: "white", borderRadius: 10, padding: 12, marginBottom: 16, border: "1px solid #FECACA" }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#991B1B", marginBottom: 10 }}>Adjust Assumptions</div>
-                  {[
-                    { label: "AOV ($)", key: "aov", step: "1" },
-                    { label: "Conv. Rate", key: "conversionRate", step: "0.001" },
-                  ].map(f => (
-                    <label key={f.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13, color: "#7F1D1D" }}>
-                      {f.label}
-                      <input type="number" step={f.step} value={assumptions[f.key]} onChange={e => setA(f.key, e.target.value)}
-                        style={{ width: 90, padding: "4px 8px", borderRadius: 6, border: "1px solid #FECACA", fontSize: 13 }} />
-                    </label>
-                  ))}
-                  <div style={{ fontSize: 11, color: "#B91C1C", marginTop: 4 }}>Changes sync to threat list automatically</div>
-                </div>
-              )}
-
-              {/* Calculation breakdown */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {[
-                  ["Keyword Volume",   `${vol.toLocaleString()}/mo`],
-                  ["Est. CTR",         `${(ctr * 100).toFixed(1)}%`],
-                  ["Conversion Rate",  `${(Number(assumptions.conversionRate) * 100).toFixed(1)}%`],
-                  ["AOV",              `$${Number(assumptions.aov).toFixed(2)}`],
-                ].map(([label, val]) => (
-                  <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #FECACA22" }}>
-                    <span style={{ fontSize: 13, color: "#991B1B" }}>{label}</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: "#7F1D1D" }}>{val}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Traffic + Sales metrics */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 16 }}>
-                <div style={{ background: "white", borderRadius: 10, padding: "10px 12px", border: "1px solid #FECACA" }}>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#D97706", fontVariantNumeric: "tabular-nums" }}>
-                    {clicks >= 1000 ? `${(clicks/1000).toFixed(1)}k` : clicks}
-                  </div>
-                  <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 2 }}>est. clicks/mo</div>
-                </div>
-                <div style={{ background: "white", borderRadius: 10, padding: "10px 12px", border: "1px solid #FECACA" }}>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#7C3AED", fontVariantNumeric: "tabular-nums" }}>
-                    {sales}
-                  </div>
-                  <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 2 }}>est. sales/mo</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Similarity Scores */}
-            {T.similarity && (
-              <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
-                <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 4px", color: "#0F172A" }}>Similarity Scores</h3>
-                <p style={{ fontSize: 12, color: "#94A3B8", margin: "0 0 16px" }}>
-                  Composite: <strong style={{ color: "#DC2626" }}>{T.severity_score}/100</strong>
-                </p>
-                <Bar label="Text Similarity"     value={T.similarity.text}   color={sColor(T.similarity.text   * 100)} />
-                <Bar label="Visual Similarity"   value={T.similarity.visual} color={sColor(T.similarity.visual * 100)} />
-                <Bar label="Domain Deceptiveness" value={T.similarity.domain} color={sColor(T.similarity.domain * 100)} />
-              </div>
-            )}
-
-            {/* Detected On Keywords */}
-            {T.keywords && T.keywords.length > 0 && (
-              <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
-                <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 12px", color: "#0F172A" }}>Detected On</h3>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {T.keywords.map(k => (
-                    <div key={k} style={{ padding: "8px 12px", borderRadius: 8, background: "#F8FAFB", border: "1px solid #F1F5F9", fontSize: 13, fontFamily: "monospace", color: "#475569" }}>
-                      "{k}"
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Takedown Channels */}
-            {T.takedown_channels && T.takedown_channels.length > 0 && (
-              <div style={{ background: "white", borderRadius: 16, padding: 24, border: "1px solid #F1F5F9" }}>
-                <h3 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 12px", color: "#0F172A" }}>Takedown Channels</h3>
-                {T.takedown_channels.map((td, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", borderRadius: 8, background: "#F8FAFB", border: "1px solid #F1F5F9", marginBottom: 6 }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: "#0F172A" }}>{td.channel}</div>
-                      <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 2 }}>{td.reason}</div>
-                    </div>
-                    <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 5, background: "#F1F5F9", color: "#94A3B8", whiteSpace: "nowrap" }}>Draft</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {tab === "takedowns" && (
-        <div style={{ background: "white", borderRadius: 16, padding: 32, border: "1px solid #F1F5F9", color: "#94A3B8", textAlign: "center" }}>
-          No takedowns initiated yet. Click <strong style={{ color: "#DC2626" }}>Initiate Takedown</strong> to begin.
-        </div>
-      )}
-
-      {tab === "history" && (
-        <div style={{ background: "white", borderRadius: 16, padding: 32, border: "1px solid #F1F5F9", color: "#94A3B8", textAlign: "center" }}>
-          Detection history will appear here as monitoring continues.
-        </div>
-      )}
+      {/* Tab content */}
+      {activeTab === "evidence" && <EvidenceTab evidence={evidence} threat={threat} />}
+      {activeTab === "overview" && <OverviewTab threat={threat} />}
     </div>
   );
 }

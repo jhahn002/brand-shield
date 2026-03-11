@@ -200,32 +200,70 @@ function EvidenceTab({ evidence, threat }) {
         )}
       </div>
 
-      {/* WHOIS sidebar */}
-      <Card style={{ padding: 24 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: "0 0 16px" }}>WHOIS & Infrastructure</h3>
-        {whois.risk_flags?.length > 0 && (
-          <div style={{ marginBottom: 16 }}>{whois.risk_flags.map((f, i) => <RiskFlag key={i} flag={f} />)}</div>
-        )}
-        <InfoRow label="Registrar" value={whois.registrar} />
-        <InfoRow label="Registered" value={fmtDate(whois.created_date)} />
-        <InfoRow label="Domain Age" value={whois.domain_age_days ? `${whois.domain_age_days} days` : "—"} highlight={whois.domain_age_days < 180} />
-        <InfoRow label="Expires" value={fmtDate(whois.expires_date)} />
-        <InfoRow label="Registrant" value={whois.registrant_name} />
-        <InfoRow label="Email" value={whois.registrant_email} mono />
-        <InfoRow label="Privacy Protected" value={whois.privacy_protected ? "Yes" : "No"} highlight={whois.privacy_protected} />
-        <div style={{ height: 1, background: C.borderLight, margin: "14px 0" }} />
-        <InfoRow label="IP Address" value={whois.ip_address} mono highlight />
-        <InfoRow label="Hosting Provider" value={whois.hosting_provider} />
-        <InfoRow label="Country" value={whois.hosting_country} />
-        <InfoRow label="ASN" value={whois.hosting_asn} mono />
-        <InfoRow label="SSL Issuer" value={whois.ssl_issuer} />
-        {whois.name_servers?.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 11, color: C.textSoft, fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Name Servers</div>
-            {whois.name_servers.map((ns, i) => <div key={i} style={{ fontSize: 11, color: C.textSoft, fontFamily: "monospace", padding: "2px 0" }}>{ns}</div>)}
+      {/* Right column: Revenue → Legal Actions → WHOIS */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* Revenue card */}
+        <Card style={{ padding: 24, borderColor: C.redBorder, background: "#FFFAFA" }}>
+          <div style={{ fontSize: 38, fontWeight: 800, color: C.red, letterSpacing: "-0.02em", fontFamily: "monospace", marginBottom: 2 }}>
+            {fmtCurrency(threat?.revenue_at_risk_monthly)}
           </div>
-        )}
-      </Card>
+          <div style={{ fontSize: 13, color: C.textMid, marginBottom: 16 }}>estimated monthly revenue at risk</div>
+          <InfoRow label="Keyword Volume" value="—" />
+          <InfoRow label="Est. CTR" value="—" />
+          <InfoRow label="Conversion Rate" value={threat?.conversion_rate ? `${(threat.conversion_rate * 100).toFixed(1)}%` : "2.8%"} />
+          <InfoRow label="AOV" value={threat?.aov ? `$${threat.aov}` : "$70.00"} />
+        </Card>
+
+        {/* Legal action type */}
+        <Card style={{ padding: 24 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: "0 0 14px" }}>Legal Action Type</h3>
+          {(() => {
+            const ttype = threat?.threat_type || "";
+            const textScore = contentSim.text_similarity_score || 0;
+            const actions = [];
+            if (ttype === "paid_ad") actions.push({ label: "Trademark Complaint", color: C.amber, desc: "Brand name used in paid ads without authorization" });
+            if (ttype === "organic_clone" || textScore > 0.7) actions.push({ label: "DMCA + Trademark", color: C.red, desc: "Full clone — both copyright and trademark infringement apply" });
+            else if (textScore > 0.5) actions.push({ label: "DMCA Takedown", color: C.red, desc: "Copyrighted content (text, images, design) copied from your site" });
+            if (ttype.includes("organic") || ttype === "shopping_listing") actions.push({ label: "Trademark Complaint", color: C.amber, desc: "Brand name or marks used to deceive consumers" });
+            if (actions.length === 0) actions.push({ label: "Trademark Complaint", color: C.amber, desc: "Brand impersonation without copied content" });
+            const unique = actions.filter((a, i, arr) => arr.findIndex(x => x.label === a.label) === i);
+            return unique.map((a, i) => (
+              <div key={i} style={{ marginBottom: i < unique.length - 1 ? 14 : 0 }}>
+                <span style={{ display: "inline-block", padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: a.color === C.red ? C.redLight : C.amberLight, color: a.color, border: `1px solid ${a.color === C.red ? C.redBorder : "#FDE68A"}`, marginBottom: 6 }}>{a.label}</span>
+                <p style={{ fontSize: 12, color: C.textMid, margin: 0, lineHeight: 1.5 }}>{a.desc}</p>
+              </div>
+            ));
+          })()}
+        </Card>
+
+        {/* WHOIS */}
+        <Card style={{ padding: 24 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: "0 0 16px" }}>WHOIS & Infrastructure</h3>
+          {whois.risk_flags?.length > 0 && (
+            <div style={{ marginBottom: 16 }}>{whois.risk_flags.map((f, i) => <RiskFlag key={i} flag={f} />)}</div>
+          )}
+          <InfoRow label="Registrar" value={whois.registrar} />
+          <InfoRow label="Registered" value={fmtDate(whois.created_date)} />
+          <InfoRow label="Domain Age" value={whois.domain_age_days ? `${whois.domain_age_days} days` : "—"} highlight={whois.domain_age_days < 180} />
+          <InfoRow label="Expires" value={fmtDate(whois.expires_date)} />
+          <InfoRow label="Registrant" value={whois.registrant_name} />
+          <InfoRow label="Email" value={whois.registrant_email} mono />
+          <InfoRow label="Privacy Protected" value={whois.privacy_protected ? "Yes" : "No"} highlight={whois.privacy_protected} />
+          <div style={{ height: 1, background: C.borderLight, margin: "14px 0" }} />
+          <InfoRow label="IP Address" value={whois.ip_address} mono highlight />
+          <InfoRow label="Hosting Provider" value={whois.hosting_provider} />
+          <InfoRow label="Country" value={whois.hosting_country} />
+          <InfoRow label="ASN" value={whois.hosting_asn} mono />
+          <InfoRow label="SSL Issuer" value={whois.ssl_issuer} />
+          {whois.name_servers?.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, color: C.textSoft, fontWeight: 600, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Name Servers</div>
+              {whois.name_servers.map((ns, i) => <div key={i} style={{ fontSize: 11, color: C.textSoft, fontFamily: "monospace", padding: "2px 0" }}>{ns}</div>)}
+            </div>
+          )}
+        </Card>
+      </div>
     </div>
   );
 }
@@ -371,35 +409,17 @@ export default function ThreatDetailPage() {
         </div>
       </div>
 
-      {/* Tabs + revenue card side by side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 24, alignItems: "start" }}>
-        <div>
-          <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, marginBottom: 24 }}>
-            {[{ id: "evidence", label: "Evidence" }, { id: "takedowns", label: "Takedowns" }, { id: "history", label: "History" }].map(tab => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none", borderBottom: activeTab === tab.id ? `2px solid ${C.blue}` : "2px solid transparent", color: activeTab === tab.id ? C.blue : C.textSoft, marginBottom: -1 }}>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          {activeTab === "evidence"  && <EvidenceTab evidence={evidence} threat={threat} />}
-          {activeTab === "takedowns" && <TakedownsTab threat={threat} onAction={handleAction} />}
-          {activeTab === "history"   && <HistoryTab threat={threat} />}
-        </div>
-
-        {/* Revenue card */}
-        <div style={{ position: "sticky", top: 24 }}>
-          <Card style={{ padding: 24, borderColor: C.redBorder, background: "#FFFAFA" }}>
-            <div style={{ fontSize: 42, fontWeight: 800, color: s >= 70 ? C.red : s >= 40 ? C.amber : C.green, letterSpacing: "-0.02em", fontFamily: "monospace", marginBottom: 4 }}>
-              {fmtCurrency(threat.revenue_at_risk_monthly)}
-            </div>
-            <div style={{ fontSize: 13, color: C.textMid, marginBottom: 20 }}>estimated monthly revenue at risk</div>
-            <InfoRow label="Keyword Volume" value="—" />
-            <InfoRow label="Est. CTR" value="—" />
-            <InfoRow label="Conversion Rate" value={threat.conversion_rate ? `${(threat.conversion_rate * 100).toFixed(1)}%` : "2.8%"} />
-            <InfoRow label="AOV" value={threat.aov ? `$${threat.aov}` : "$70.00"} />
-          </Card>
-        </div>
+      {/* Tabs — full width, revenue card lives inside EvidenceTab's right column */}
+      <div style={{ display: "flex", borderBottom: `1px solid ${C.border}`, marginBottom: 24 }}>
+        {[{ id: "evidence", label: "Evidence" }, { id: "takedowns", label: "Takedowns" }, { id: "history", label: "History" }].map(tab => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", background: "transparent", border: "none", borderBottom: activeTab === tab.id ? `2px solid ${C.blue}` : "2px solid transparent", color: activeTab === tab.id ? C.blue : C.textSoft, marginBottom: -1 }}>
+            {tab.label}
+          </button>
+        ))}
       </div>
+      {activeTab === "evidence"  && <EvidenceTab evidence={evidence} threat={threat} />}
+      {activeTab === "takedowns" && <TakedownsTab threat={threat} onAction={handleAction} />}
+      {activeTab === "history"   && <HistoryTab threat={threat} />}
     </div>
   );
 }
